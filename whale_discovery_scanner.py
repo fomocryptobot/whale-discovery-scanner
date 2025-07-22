@@ -37,13 +37,13 @@ COINGECKO_PRO_BASE_URL = "https://pro-api.coingecko.com/api/v3"
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Top 5 most reliable tokens for testing
+# High-value whale intelligence: Stablecoins + Blue Chips
 TOP_TOKENS = {
+    'USDC': {'address': '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', 'decimals': 6, 'coingecko_id': 'usd-coin'},
+    'USDT': {'address': '0xdac17f958d2ee523a2206206994597c13d831ec7', 'decimals': 6, 'coingecko_id': 'tether'},
+    'WETH': {'address': '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2', 'decimals': 18, 'coingecko_id': 'weth'},
+    'WBTC': {'address': '0x2260fac5e5542a773aa44fbcfedf7c193bc2c599', 'decimals': 8, 'coingecko_id': 'wrapped-bitcoin'},
     'UNI': {'address': '0x1f9840a85d5af5bf1d1762f925bdaddc4201f984', 'decimals': 18, 'coingecko_id': 'uniswap'},
-    'LINK': {'address': '0x514910771af9ca656af840dff83e8264ecf986ca', 'decimals': 18, 'coingecko_id': 'chainlink'},
-    'USDC': {'address': '0xa0b86a33e42441e6a2cc5a9c13a9f0b1c8b33e9a4', 'decimals': 6, 'coingecko_id': 'usd-coin'},
-    'PEPE': {'address': '0x6982508145454ce325ddbe47a25d4ec3d2311933', 'decimals': 18, 'coingecko_id': 'pepe'},
-    'SHIB': {'address': '0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce', 'decimals': 18, 'coingecko_id': 'shiba-inu'},
 }
 
 class EtherscanAPI:
