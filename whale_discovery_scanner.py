@@ -362,8 +362,33 @@ class WhaleScanner:
         
         return whale_transactions
     
+    def should_run_scheduled_scan(self):
+        """Check if it's time for the scheduled 23:30 UTC scan"""
+        from datetime import timezone
+        now = datetime.now(timezone.utc)
+        # Run at 23:30, 05:30, 11:30, 17:30 UTC (every 6 hours from 23:30)
+        target_hours = [23, 5, 11, 17]
+        return (now.hour in target_hours and 30 <= now.minute <= 35)
+
+    def get_next_scan_time(self):
+        """Get the next scheduled scan time"""
+        from datetime import timezone
+        now = datetime.now(timezone.utc)
+        target_hours = [23, 5, 11, 17]
+        
+        for hour in target_hours:
+            if hour > now.hour or (hour == now.hour and now.minute < 30):
+                return f"{hour:02d}:30 UTC today"
+        
+        return "23:30 UTC tomorrow"
+
     def run_scan(self):
         """Execute whale scan with improved error handling"""
+        # Check if it's the right time to run
+        if not self.should_run_scheduled_scan():
+            logger.info(f"⏰ Waiting for scheduled time. Next scan at: {self.get_next_scan_time()}")
+            return
+            
         logger.info("🎯 FCB WHALE DISCOVERY SCANNER v4.2 - STARTING")
         start_time = datetime.utcnow()
         
