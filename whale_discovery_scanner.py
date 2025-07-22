@@ -8,7 +8,7 @@ Deploy as Render Background Worker for automated whale discovery
 
 import os
 import requests
-import psycopg2
+import psycopg as psycopg2
 import json
 import time
 import asyncio
