@@ -6,6 +6,8 @@ Focuses on finding fresh whale activity and expanding the database
 Deploy as Render Background Worker for automated whale discovery
 """
 
+print("STARTING WHALE SCANNER...")
+
 import os
 import requests
 import psycopg as psycopg2
