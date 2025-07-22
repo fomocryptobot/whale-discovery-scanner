@@ -16,7 +16,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 
 # Database configuration
-DATABASE_URL = os.getenv('DATABASE_URL', "postgresql://wallet_admin:AbRD14errRCD6H793FRCcPvXIRLgNugK@dpg-d1vd05je5dus739m8mv0-a.frankfurt-postgres.render.com:5432/wallet_transactions")
+DATABASE_URL = os.getenv('DB_URL', "postgresql://wallet_admin:AbRD14errRCD6H793FRCcPvXIRLgNugK@dpg-d1vd05je5dus739m8mv0-a.frankfurt-postgres.render.com:5432/wallet_transactions")
 
 # API Keys
 ETHERSCAN_API_KEY = os.getenv('ETHERSCAN_API_KEY', 'GCB4J11T34YG29GNJJX7R7JADRTAFJKPDE')
@@ -147,11 +147,7 @@ class WhaleDiscoveryScanner:
         discovery_run_time = next_session_time - timedelta(seconds=DISCOVERY_LEAD_TIME)
         
         return discovery_run_time, next_session_time
-        """Get current number of unique whales in database"""
-        conn = self.get_database_connection()
-        if not conn:
-            return 0
-        
+    
     def get_current_whale_count(self):
         """Get current number of unique whales in database"""
         conn = self.get_database_connection()
