@@ -12,13 +12,13 @@ from datetime import datetime, timedelta
 import logging
 
 try:
-    import psycopg2
-    from psycopg2 import IntegrityError, DataError
+    import psycopg
+    from psycopg import IntegrityError, DataError
 except ImportError:
-    print("❌ Installing psycopg2...")
-    os.system("pip install psycopg2-binary")
-    import psycopg2
-    from psycopg2 import IntegrityError, DataError
+    print("❌ Installing psycopg...")
+    os.system("pip install psycopg[binary]")
+    import psycopg
+    from psycopg import IntegrityError, DataError
 
 # Configuration
 DB_URL = os.getenv('DB_URL', 'postgresql://wallet_admin:AbRD14errRCD6H793FRCcPvXIRLgNugK@dpg-d1vd05je5dus739m8mv0-a.frankfurt-postgres.render.com:5432/wallet_transactions')
@@ -193,7 +193,7 @@ class WhaleScanner:
     def connect_database(self):
         """Connect to database with autocommit disabled"""
         try:
-            self.db_connection = psycopg2.connect(DB_URL)
+            self.db_connection = psycopg.connect(DB_URL)
             self.db_connection.autocommit = False  # Enable transaction control
             logger.info("✅ Database connected")
             return True
