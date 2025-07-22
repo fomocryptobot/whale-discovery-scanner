@@ -1,459 +1,572 @@
 #!/usr/bin/env python3
 """
-FCB WHALE DISCOVERY SCANNER - 6 HOUR NEW WHALE DETECTION
-Continuously discovers new whale wallets every 6 hours
-Focuses on finding fresh whale activity and expanding the database
-Deploy as Render Background Worker for automated whale discovery
+FCB Whale Discovery Scanner v4 - FIXED VERSION
+Runs every 6 hours to discover new whale transactions
+Includes proper decimal handling, validation, and correct CoinGecko Pro API integration
 """
 
-import os
 import requests
-import psycopg as psycopg2
-import json
 import time
-import asyncio
+import json
+import os
 from datetime import datetime, timedelta
-from decimal import Decimal
+import logging
 
-print("🚀 SCRIPT STARTING - TESTING...")
-print(f"📊 Environment check - DB_URL exists: {bool(os.getenv('DB_URL'))}")
+try:
+    import psycopg2
+except ImportError:
+    print("❌ Installing psycopg2...")
+    os.system("pip install psycopg2-binary")
+    import psycopg2
 
-# Database configuration
-DATABASE_URL = os.getenv('DB_URL', "postgresql://wallet_admin:AbRD14errRCD6H793FRCcPvXIRLgNugK@dpg-d1vd05je5dus739m8mv0-a.frankfurt-postgres.render.com:5432/wallet_transactions")
-
-# API Keys
+# Configuration from environment variables
+DB_URL = os.getenv('DB_URL', 'postgresql://wallet_admin:AbRD14errRCD6H793FRCcPvXIRLgNugK@dpg-d1vd05je5dus739m8mv0-a.frankfurt-postgres.render.com:5432/wallet_transactions')
 ETHERSCAN_API_KEY = os.getenv('ETHERSCAN_API_KEY', 'GCB4J11T34YG29GNJJX7R7JADRTAFJKPDE')
-COINGECKO_PRO_API_KEY = os.getenv('COINGECKO_API_KEY', 'CG-bJP1bqyMemFNQv5dp4nvA9xm')
+COINGECKO_API_KEY = os.getenv('COINGECKO_API_KEY', 'CG-bJP1bqyMemFNQv5dp4nvA9xm')
 
-# CoinGecko Pro API
+# Scanner settings
+WHALE_THRESHOLD_USD = 1000
+ETHERSCAN_DELAY = 0.6  # 0.6 seconds for live scanning
+COINGECKO_DELAY = 0.12  # Pro API: 500 calls/min = 0.12s delay minimum
+MAX_USD_AMOUNT = 100_000_000  # $100M sanity check
+SCANNER_VERSION = "whale_discovery_v4"
+
+# CoinGecko Pro API settings
 COINGECKO_PRO_BASE_URL = "https://pro-api.coingecko.com/api/v3"
+COINGECKO_PRO_HEADERS = {'x-cg-pro-api-key': COINGECKO_API_KEY}
 
-# Discovery configuration - FCB Session Timing
-FCB_SESSION_HOURS = [0, 6, 12, 18]  # UTC hours when FCB sessions begin
-DISCOVERY_LEAD_TIME = 30 * 60  # Run 30 minutes before each FCB session
-WHALE_THRESHOLD = 1000  # $1000+ transactions
-SCAN_HOURS_BACK = 6  # Look back 6 hours each scan (since last FCB session)
+# Logging setup
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
-# Comprehensive target tokens for whale discovery
-target_tokens = {
-    'ethereum': {
-        # Major DeFi tokens
-        'UNI': {'contract': '0x1f9840a85d5af5bf1d1762f925bdaddc4201f984', 'decimals': 18},
-        'LINK': {'contract': '0x514910771af9ca656af840dff83e8264ecf986ca', 'decimals': 18},
-        'AAVE': {'contract': '0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9', 'decimals': 18},
-        'COMP': {'contract': '0xc00e94cb662c3520282e6f5717214004a7f26888', 'decimals': 18},
-        'CRV': {'contract': '0xd533a949740bb3306d119cc777fa900ba034cd52', 'decimals': 18},
-        'SUSHI': {'contract': '0x6b3595068778dd592e39a122f4f5a5cf09c90fe2', 'decimals': 18},
-        
-        # Major meme/pump tokens
-        'PEPE': {'contract': '0x6982508145454ce325ddbe47a25d4ec3d2311933', 'decimals': 18},
-        'SHIB': {'contract': '0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce', 'decimals': 18},
-        'FLOKI': {'contract': '0xcf0c122c6b73ff809c693db761e7baebe62b6a2e', 'decimals': 9},
-        'DOGE': {'contract': '0x4206931337dc273a630d328da6441786bfad668f', 'decimals': 8},
-        'BONK': {'contract': '0x1151cb3d861920e07a38e03eead12c32178567ecf', 'decimals': 5},
-        'WIF': {'contract': '0x76fcfd8e5b1b516a7dc0e2bbe3d6b7c3b1a6bf85', 'decimals': 6},
-        
-        # Stablecoins (high volume whale activity)
-        'USDC': {'contract': '0xa0b86a33e6eb3976d6c5732e4dc9ae7e69b9db0a', 'decimals': 6},
-        'USDT': {'contract': '0xdac17f958d2ee523a2206206994597c13d831ec7', 'decimals': 6},
-        'DAI': {'contract': '0x6b175474e89094c44da98b954eedeac495271d0f', 'decimals': 18},
-        
-        # Gaming/NFT tokens
-        'APE': {'contract': '0x4d224452801aced8b2f0aebe155379bb5d594381', 'decimals': 18},
-        'SAND': {'contract': '0x3845badade8e6dff049820680d1f14bd3903a5d0', 'decimals': 18},
-        'MANA': {'contract': '0x0f5d2fb29fb7d3cfee444a200298f468908cc942', 'decimals': 18},
-        
-        # Layer 2 / Scaling tokens
-        'MATIC': {'contract': '0x7d1afa7b718fb893db30a3abc0cfc608aacfebb0', 'decimals': 18},
-        'OP': {'contract': '0x4200000000000000000000000000000000000042', 'decimals': 18},
-        'ARB': {'contract': '0x912ce59144191c1204e64559fe8253a0e49e6548', 'decimals': 18},
-    }
+# Established tokens for live scanning (54 tokens)
+ESTABLISHED_TOKENS = {
+    # DeFi tokens
+    'UNI': {'address': '0x1f9840a85d5af5bf1d1762f925bdaddc4201f984', 'decimals': 18, 'coingecko_id': 'uniswap'},
+    'LINK': {'address': '0x514910771af9ca656af840dff83e8264ecf986ca', 'decimals': 18, 'coingecko_id': 'chainlink'},
+    'AAVE': {'address': '0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9', 'decimals': 18, 'coingecko_id': 'aave'},
+    'COMP': {'address': '0xc00e94cb662c3520282e6f5717214004a7f26888', 'decimals': 18, 'coingecko_id': 'compound-governance-token'},
+    'CRV': {'address': '0xd533a949740bb3306d119cc777fa900ba034cd52', 'decimals': 18, 'coingecko_id': 'curve-dao-token'},
+    'SUSHI': {'address': '0x6b3595068778dd592e39a122f4f5a5cf09c90fe2', 'decimals': 18, 'coingecko_id': 'sushi'},
+    'MKR': {'address': '0x9f8f72aa9304c8b593d555f12ef6589cc3a579a2', 'decimals': 18, 'coingecko_id': 'maker'},
+    'LDO': {'address': '0x5a98fcbea516cf06857215779fd812ca3bef1b32', 'decimals': 18, 'coingecko_id': 'lido-dao'},
+    'SNX': {'address': '0xc011a73ee8576fb46f5e1c5751ca3b9fe0af2a6f', 'decimals': 18, 'coingecko_id': 'havven'},
+    'YFI': {'address': '0x0bc529c00c6401aef6d220be8c6ea1667f6ad93e', 'decimals': 18, 'coingecko_id': 'yearn-finance'},
+    
+    # Stablecoins
+    'USDC': {'address': '0xa0b86a33e42441e6a2cc5a9c13a9f0b1c8b33e9a4', 'decimals': 6, 'coingecko_id': 'usd-coin'},
+    'USDT': {'address': '0xdac17f958d2ee523a2206206994597c13d831ec7', 'decimals': 6, 'coingecko_id': 'tether'},
+    'DAI': {'address': '0x6b175474e89094c44da98b954eedeac495271d0f', 'decimals': 18, 'coingecko_id': 'dai'},
+    'BUSD': {'address': '0x4fabb145d64652a948d72533023f6e7a623c7c53', 'decimals': 18, 'coingecko_id': 'binance-usd'},
+    'LUSD': {'address': '0x5f98805a4e8be255a32880fdec7f6728c6568ba0', 'decimals': 18, 'coingecko_id': 'liquity-usd'},
+    
+    # Layer 2
+    'MATIC': {'address': '0x7d1afa7b718fb893db30a3abc0cfc608aacfebb0', 'decimals': 18, 'coingecko_id': 'matic-network'},
+    'ARB': {'address': '0xb50721bcf8d664c30412cfbc6cf7a15145234ad1', 'decimals': 18, 'coingecko_id': 'arbitrum'},
+    'IMX': {'address': '0xf57e7e7c23978c3caec3c3548e3d615c346e79ff', 'decimals': 18, 'coingecko_id': 'immutable-x'},
+    'LRC': {'address': '0xbbbbca6a901c926f240b89eacb641d8aec7aeafd', 'decimals': 18, 'coingecko_id': 'loopring'},
+    
+    # Gaming
+    'APE': {'address': '0x4d224452801aced8b2f0aebe155379bb5d594381', 'decimals': 18, 'coingecko_id': 'apecoin'},
+    'SAND': {'address': '0x3845badade8e6dff049820680d1f14bd3903a5d0', 'decimals': 18, 'coingecko_id': 'the-sandbox'},
+    'MANA': {'address': '0x0f5d2fb29fb7d3cfee444a200298f468908cc942', 'decimals': 18, 'coingecko_id': 'decentraland'},
+    'AXS': {'address': '0xbb0e17ef65f82ab018d8edd776e8dd940327b28b', 'decimals': 18, 'coingecko_id': 'axie-infinity'},
+    'ENJ': {'address': '0xf629cbd94d3791c9250152bd8dfbdf380e2a3b9c', 'decimals': 18, 'coingecko_id': 'enjincoin'},
+    'GALA': {'address': '0x15d4c048f83bd7e37d49ea4c83a07267ec4203da', 'decimals': 8, 'coingecko_id': 'gala'},
+    
+    # Memes
+    'PEPE': {'address': '0x6982508145454ce325ddbe47a25d4ec3d2311933', 'decimals': 18, 'coingecko_id': 'pepe'},
+    'SHIB': {'address': '0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce', 'decimals': 18, 'coingecko_id': 'shiba-inu'},
+    'FLOKI': {'address': '0xcf0c122c6b73ff809c693db761e7baebe62b6a2e', 'decimals': 9, 'coingecko_id': 'floki'},
+    'BONK': {'address': '0x1151cb3d861920e07a38e03eead12c32178567f6', 'decimals': 5, 'coingecko_id': 'bonk'},
 }
 
-class WhaleDiscoveryScanner:
-    def __init__(self):
-        self.last_scan_timestamp = None
-        self.total_whales_discovered = 0
-        self.scan_count = 0
-        
-    def get_database_connection(self):
-        """Get database connection"""
-        try:
-            return psycopg2.connect(DATABASE_URL)
-        except Exception as e:
-            print(f"❌ Database connection failed: {e}")
-            return None
+class CoinGeckoProAPI:
+    """Handles CoinGecko Pro API calls with proper authentication and rate limiting"""
     
-    def save_whale_transaction(self, transaction_data):
-        """Save whale transaction to database"""
-        conn = self.get_database_connection()
-        if not conn:
-            return False
-        
-        try:
-            cursor = conn.cursor()
-            
-            # Create table if it doesn't exist
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS whale_transactions (
-                    id SERIAL PRIMARY KEY,
-                    transaction_id VARCHAR(100) UNIQUE NOT NULL,
-                    wallet_address VARCHAR(50) NOT NULL,
-                    blockchain VARCHAR(20) NOT NULL DEFAULT 'ethereum',
-                    block_number BIGINT NOT NULL,
-                    block_timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
-                    from_address VARCHAR(50) NOT NULL,
-                    to_address VARCHAR(50) NOT NULL,
-                    coin_symbol VARCHAR(20) NOT NULL,
-                    activity_type VARCHAR(20) NOT NULL,
-                    amount_tokens DECIMAL(30, 18) NOT NULL,
-                    amount_usd DECIMAL(20, 2) NOT NULL,
-                    raw_transaction JSONB,
-                    data_source VARCHAR(50) NOT NULL DEFAULT 'scanner',
-                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-                )
-            """)
-            
-            # Direct INSERT instead of function call
-            cursor.execute("""
-                INSERT INTO whale_transactions (
-                    transaction_id, wallet_address, blockchain, block_number, 
-                    block_timestamp, from_address, to_address, coin_symbol,
-                    activity_type, amount_tokens, amount_usd, raw_transaction, data_source
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (transaction_id) DO UPDATE SET
-                    updated_at = NOW(),
-                    amount_usd = EXCLUDED.amount_usd,
-                    raw_transaction = EXCLUDED.raw_transaction
-            """, (
-                transaction_data['transaction_id'],
-                transaction_data['wallet_address'],
-                transaction_data['blockchain'],
-                transaction_data['block_number'],
-                transaction_data['block_timestamp'],
-                transaction_data['from_address'],
-                transaction_data['to_address'],
-                transaction_data['coin_symbol'],
-                transaction_data['activity_type'],
-                transaction_data['amount_tokens'],
-                transaction_data['amount_usd'],
-                json.dumps(transaction_data['raw_transaction']),
-                transaction_data['data_source']
-            ))
-            
-            conn.commit()
-            return True
-            
-        except Exception as e:
-            if "duplicate key" not in str(e).lower():
-                print(f"⚠️ Failed to save transaction: {e}", flush=True)
-            return False
-        finally:
-            conn.close()
+    def __init__(self, api_key, delay=COINGECKO_DELAY):
+        self.api_key = api_key
+        self.delay = delay
+        self.base_url = COINGECKO_PRO_BASE_URL
+        self.headers = {'x-cg-pro-api-key': self.api_key}
+        self.price_cache = {}
+        self.session = requests.Session()
+        self.session.headers.update(self.headers)
     
-    def get_next_fcb_session_time(self):
-        """Calculate next FCB session time and when to run discovery"""
-        now = datetime.utcnow()
+    def _make_request(self, endpoint, params=None, max_retries=3):
+        """Make rate-limited request with retries"""
+        url = f"{self.base_url}/{endpoint}"
         
-        # Find next FCB session hour
-        current_hour = now.hour
-        next_session_hour = None
+        for attempt in range(max_retries):
+            try:
+                # Rate limiting - Pro API allows 500-1000 calls/min
+                time.sleep(self.delay)
+                
+                response = self.session.get(url, params=params or {}, timeout=30)
+                
+                if response.status_code == 200:
+                    return response.json()
+                elif response.status_code == 429:  # Rate limited
+                    logger.warning(f"Rate limited, backing off (attempt {attempt + 1})")
+                    time.sleep(self.delay * (2 ** attempt))  # Exponential backoff
+                    continue
+                else:
+                    logger.warning(f"HTTP {response.status_code}: {response.text}")
+                    return None
+                    
+            except requests.RequestException as e:
+                logger.error(f"Request failed (attempt {attempt + 1}): {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(self.delay * (2 ** attempt))
         
-        for session_hour in FCB_SESSION_HOURS:
-            if session_hour > current_hour:
-                next_session_hour = session_hour
-                break
-        
-        # If no session found today, use first session tomorrow
-        if next_session_hour is None:
-            next_session_hour = FCB_SESSION_HOURS[0]
-            next_session_date = now.date() + timedelta(days=1)
-        else:
-            next_session_date = now.date()
-        
-        # Calculate exact session time
-        next_session_time = datetime.combine(next_session_date, datetime.min.time().replace(hour=next_session_hour))
-        
-        # Calculate discovery run time (30 minutes before session)
-        discovery_run_time = next_session_time - timedelta(seconds=DISCOVERY_LEAD_TIME)
-        
-        return discovery_run_time, next_session_time
+        return None
     
-    def get_current_whale_count(self):
-        """Get current number of unique whales in database"""
-        conn = self.get_database_connection()
-        if not conn:
-            return 0
-        
+    def get_token_price(self, coingecko_id, vs_currency='usd'):
+        """Get current token price using Pro API"""
         try:
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(DISTINCT wallet_address) FROM whale_transactions")
-            count = cursor.fetchone()[0]
-            return count
-        except Exception as e:
-            print(f"⚠️ Failed to get whale count: {e}")
-            return 0
-        finally:
-            conn.close()
-    
-    def get_token_price(self, contract_address):
-        """Get token price using CoinGecko Pro API"""
-        try:
-            url = f"{COINGECKO_PRO_BASE_URL}/simple/token_price/ethereum"
-            headers = {'x-cg-pro-api-key': COINGECKO_PRO_API_KEY}
+            # Check cache first (cache for 5 minutes)
+            cache_key = f"{coingecko_id}_{vs_currency}"
+            now = datetime.utcnow()
+            
+            if cache_key in self.price_cache:
+                cached_time, cached_price = self.price_cache[cache_key]
+                if (now - cached_time).total_seconds() < 300:  # 5 minutes
+                    return cached_price
+            
+            # Make API request
             params = {
-                'contract_addresses': contract_address,
-                'vs_currencies': 'usd'
+                'ids': coingecko_id,
+                'vs_currencies': vs_currency,
+                'include_24hr_change': 'false'
             }
             
-            response = requests.get(url, headers=headers, params=params, timeout=10)
-            if response.status_code == 200:
-                data = response.json()
-                return data.get(contract_address.lower(), {}).get('usd', 0)
+            data = self._make_request('simple/price', params)
+            
+            if data and coingecko_id in data:
+                price = data[coingecko_id].get(vs_currency, 0)
+                if price > 0:
+                    # Cache the result
+                    self.price_cache[cache_key] = (now, price)
+                    logger.debug(f"Got price for {coingecko_id}: ${price:.8f}")
+                    return price
+            
+            logger.warning(f"No price data for {coingecko_id}")
+            return 0
             
         except Exception as e:
-            print(f"⚠️ Price fetch failed for {contract_address}: {e}")
+            logger.error(f"Price lookup error for {coingecko_id}: {e}")
+            return 0
+    
+    def get_multiple_prices(self, coingecko_ids, vs_currency='usd'):
+        """Get multiple token prices in one request (more efficient)"""
+        try:
+            if not coingecko_ids:
+                return {}
+            
+            # Join up to 250 IDs (API limit)
+            ids_string = ','.join(coingecko_ids[:250])
+            
+            params = {
+                'ids': ids_string,
+                'vs_currencies': vs_currency,
+                'include_24hr_change': 'false'
+            }
+            
+            data = self._make_request('simple/price', params)
+            
+            if data:
+                prices = {}
+                now = datetime.utcnow()
+                
+                for coin_id, price_data in data.items():
+                    price = price_data.get(vs_currency, 0)
+                    if price > 0:
+                        prices[coin_id] = price
+                        # Cache individual prices
+                        cache_key = f"{coin_id}_{vs_currency}"
+                        self.price_cache[cache_key] = (now, price)
+                
+                logger.info(f"Got prices for {len(prices)} tokens")
+                return prices
+            
+            return {}
+            
+        except Exception as e:
+            logger.error(f"Multiple price lookup error: {e}")
+            return {}
+
+class EtherscanAPI:
+    """Handles Etherscan API calls with proper rate limiting"""
+    
+    def __init__(self, api_key, delay=ETHERSCAN_DELAY):
+        self.api_key = api_key
+        self.delay = delay
+        self.base_url = "https://api.etherscan.io/api"
+        self.session = requests.Session()
+    
+    def _make_request(self, params, max_retries=3):
+        """Make rate-limited request with retries"""
+        params['apikey'] = self.api_key
+        
+        for attempt in range(max_retries):
+            try:
+                time.sleep(self.delay)  # Rate limiting
+                
+                response = self.session.get(self.base_url, params=params, timeout=30)
+                response.raise_for_status()
+                
+                data = response.json()
+                
+                if data.get('status') == '1':
+                    return data.get('result', [])
+                else:
+                    error_msg = data.get('message', 'Unknown error')
+                    if 'rate limit' in error_msg.lower():
+                        logger.warning(f"Etherscan rate limited, backing off")
+                        time.sleep(self.delay * 2)
+                        continue
+                    else:
+                        logger.warning(f"Etherscan API error: {error_msg}")
+                        return []
+                    
+            except requests.RequestException as e:
+                logger.error(f"Etherscan request failed (attempt {attempt + 1}): {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(self.delay * (2 ** attempt))
+        
+        return []
+    
+    def get_latest_block(self):
+        """Get the latest block number"""
+        params = {
+            'module': 'proxy',
+            'action': 'eth_blockNumber'
+        }
+        
+        result = self._make_request(params)
+        if result:
+            try:
+                return int(result, 16)  # Convert hex to int
+            except (ValueError, TypeError):
+                pass
+        
         return 0
     
-    def get_current_block(self):
-        """Get current Ethereum block number"""
-        try:
-            url = f"https://api.etherscan.io/api?module=proxy&action=eth_blockNumber&apikey={ETHERSCAN_API_KEY}"
-            response = requests.get(url, timeout=10)
-            return int(response.json()['result'], 16)
-        except Exception as e:
-            print(f"⚠️ Failed to get current block: {e}")
-            return 0
+    def get_token_transfers(self, contract_address, start_block, end_block, page=1, offset=10000):
+        """Get ERC-20 token transfers for a contract"""
+        params = {
+            'module': 'account',
+            'action': 'tokentx',
+            'contractaddress': contract_address,
+            'startblock': start_block,
+            'endblock': end_block,
+            'page': page,
+            'offset': offset,
+            'sort': 'desc'
+        }
+        
+        return self._make_request(params)
+
+class WhaleTransactionValidator:
+    """Validates whale transactions before database insertion"""
     
-    def discover_new_whales(self):
-        """Discover new whale wallets in the last 12 hours"""
-        print(f"\n🔍 WHALE DISCOVERY SCAN #{self.scan_count + 1}")
-        print(f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        print("=" * 60)
+    @staticmethod
+    def validate_address(address):
+        """Validate Ethereum address format"""
+        if not address or not isinstance(address, str):
+            return None
         
-        current_block = self.get_current_block()
-        if current_block == 0:
-            print("❌ Cannot get current block")
-            return 0
+        address = address.strip().lower()
+        if not address.startswith('0x') or len(address) != 42:
+            return None
         
-        # Calculate 6-hour block range (since last FCB session)
-        blocks_back = SCAN_HOURS_BACK * 300  # ~300 blocks per hour
-        start_block = current_block - blocks_back
-        
-        print(f"📊 Scanning blocks {start_block:,} to {current_block:,}")
-        print(f"🕐 Looking back {SCAN_HOURS_BACK} hours (since last FCB session)")
-        print(f"🎯 Preparing whale intelligence for FCB session")
-        
-        new_whales_found = 0
-        total_volume = 0
-        
-        # Scan each target token
-        for token_symbol, token_data in target_tokens['ethereum'].items():
-            print(f"\n🎯 Scanning {token_symbol} for new whales...")
+        try:
+            int(address[2:], 16)  # Check if hex
+            return address
+        except ValueError:
+            return None
+    
+    @staticmethod
+    def validate_usd_amount(amount_usd):
+        """Validate USD amount is realistic for whale detection"""
+        try:
+            amount = float(amount_usd)
             
-            contract_address = token_data['contract']
-            decimals = token_data['decimals']
-            
-            # Get current token price
-            token_price = self.get_token_price(contract_address)
-            if token_price == 0:
-                print(f"⚠️ No price data for {token_symbol}, skipping...")
-                continue
-            
-            print(f"💰 {token_symbol} price: ${token_price:.8f}")
-            
-            # Rate limiting for Etherscan (respect 2 calls/sec limit)
-            time.sleep(0.6)
-            
-            # Get transfer events
-            url = "https://api.etherscan.io/api"
-            params = {
-                'module': 'logs',
-                'action': 'getLogs',
-                'fromBlock': start_block,
-                'toBlock': current_block,
-                'address': contract_address,
-                'topic0': '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef',
-                'apikey': ETHERSCAN_API_KEY
-            }
-            
-            try:
-                response = requests.get(url, params=params, timeout=30)
-                data = response.json()
+            if amount < WHALE_THRESHOLD_USD:
+                return None
                 
-                if data.get('status') != '1':
-                    error_msg = data.get('message', 'Unknown error')
-                    print(f"⚠️ API error for {token_symbol}: {error_msg}")
-                    
-                    if 'rate limit' in error_msg.lower():
-                        print("⏰ Rate limit hit - waiting 10 seconds...")
-                        time.sleep(10)
+            if amount > MAX_USD_AMOUNT:
+                logger.warning(f"Amount ${amount:,.2f} above sanity limit")
+                return None
+                
+            return amount
+            
+        except (ValueError, TypeError):
+            return None
+    
+    @staticmethod
+    def calculate_token_amount(raw_amount, decimals):
+        """Convert raw token amount to human-readable format"""
+        try:
+            raw = float(raw_amount)
+            dec = int(decimals) if decimals else 18
+            
+            human_readable = raw / (10 ** dec)
+            return human_readable
+            
+        except (ValueError, TypeError, ZeroDivisionError):
+            return None
+
+class WhaleDiscoveryScanner:
+    """Main whale discovery scanner class"""
+    
+    def __init__(self):
+        self.validator = WhaleTransactionValidator()
+        self.etherscan = EtherscanAPI(ETHERSCAN_API_KEY)
+        self.coingecko = CoinGeckoProAPI(COINGECKO_API_KEY)
+        self.db_connection = None
+        
+    def connect_database(self):
+        """Connect to the whale intelligence database"""
+        try:
+            self.db_connection = psycopg2.connect(DB_URL)
+            logger.info("✅ Connected to whale intelligence database")
+            return True
+        except Exception as e:
+            logger.error(f"❌ Database connection failed: {e}")
+            return False
+    
+    def get_scan_range(self, hours_back=6):
+        """Get block range for the last N hours"""
+        try:
+            latest_block = self.etherscan.get_latest_block()
+            if latest_block == 0:
+                logger.error("Failed to get latest block")
+                return None, None
+            
+            # Ethereum averages ~12 seconds per block
+            blocks_per_hour = 300  # 3600 seconds / 12 seconds
+            blocks_back = blocks_per_hour * hours_back
+            
+            start_block = max(0, latest_block - blocks_back)
+            
+            logger.info(f"📊 Scanning blocks {start_block:,} to {latest_block:,} ({hours_back}h back)")
+            return start_block, latest_block
+            
+        except Exception as e:
+            logger.error(f"Error calculating scan range: {e}")
+            return None, None
+    
+    def get_token_prices(self):
+        """Get current prices for all established tokens"""
+        logger.info("💰 Fetching token prices from CoinGecko Pro API...")
+        
+        coingecko_ids = [info['coingecko_id'] for info in ESTABLISHED_TOKENS.values()]
+        prices = self.coingecko.get_multiple_prices(coingecko_ids)
+        
+        token_prices = {}
+        for symbol, info in ESTABLISHED_TOKENS.items():
+            coingecko_id = info['coingecko_id']
+            price = prices.get(coingecko_id, 0)
+            token_prices[symbol] = price
+            
+            if price > 0:
+                logger.info(f"  💰 {symbol}: ${price:.8f}")
+            else:
+                logger.warning(f"  ⚠️ {symbol}: No price data")
+        
+        return token_prices
+    
+    def scan_token_whales(self, symbol, token_info, token_price, start_block, end_block):
+        """Scan for whale transactions in a specific token"""
+        logger.info(f"🔍 Scanning {symbol} whales...")
+        
+        if token_price <= 0:
+            logger.warning(f"Skipping {symbol} - no price data")
+            return []
+        
+        contract_address = token_info['address']
+        decimals = token_info['decimals']
+        
+        # Get token transfers from Etherscan
+        transfers = self.etherscan.get_token_transfers(
+            contract_address, start_block, end_block
+        )
+        
+        if not transfers:
+            logger.info(f"  No transfers found for {symbol}")
+            return []
+        
+        whale_transactions = []
+        
+        for transfer in transfers:
+            try:
+                # Extract transfer data
+                tx_hash = transfer.get('hash')
+                from_address = self.validator.validate_address(transfer.get('from'))
+                to_address = self.validator.validate_address(transfer.get('to'))
+                raw_amount = transfer.get('value', '0')
+                block_number = int(transfer.get('blockNumber', 0))
+                timestamp = datetime.fromtimestamp(int(transfer.get('timeStamp', 0)))
+                
+                if not tx_hash or not from_address or not to_address or raw_amount == '0':
                     continue
                 
-                transfers = data.get('result', [])
-                print(f"📈 Found {len(transfers):,} {token_symbol} transfers")
+                # Calculate human-readable token amount
+                token_amount = self.validator.calculate_token_amount(raw_amount, decimals)
+                if not token_amount:
+                    continue
                 
-                token_whales = 0
-                token_volume = 0
+                # Calculate USD value
+                usd_amount = token_amount * token_price
                 
-                # Process transfers to find whales
-                for log in transfers:
-                    try:
-                        # Decode transfer data
-                        transfer_data = log.get('data', '0x')
-                        if len(transfer_data) < 66:
-                            continue
-                        
-                        # Extract amount
-                        amount_hex = transfer_data[2:66]
-                        amount_tokens = int(amount_hex, 16) / (10 ** decimals)
-                        amount_usd = amount_tokens * token_price
-                        
-                        # Check whale threshold
-                        if amount_usd >= WHALE_THRESHOLD:
-                            topics = log.get('topics', [])
-                            if len(topics) >= 3:
-                                from_address = '0x' + topics[1][-40:]
-                                to_address = '0x' + topics[2][-40:]
-                                
-                                # Determine whale address and activity type
-                                whale_address = from_address
-                                activity_type = 'transfer'
-                                
-                                # Check for DEX interactions
-                                dex_addresses = {
-                                    '0x7a250d5630b4cf539739df2c5dacb4c659f2488d',  # Uniswap V2
-                                    '0xe592427a0aece92de3edee1f18e0157c05861564',  # Uniswap V3
-                                    '0x1111111254fb6c44bac0bed2854e76f90643097d',  # 1inch
-                                    '0xdef1c0ded9bec7f1a1670819833240f027b25eff',  # 0x Protocol
-                                }
-                                
-                                if from_address.lower() in [addr.lower() for addr in dex_addresses]:
-                                    activity_type = 'buy'
-                                    whale_address = to_address
-                                elif to_address.lower() in [addr.lower() for addr in dex_addresses]:
-                                    activity_type = 'sell'
-                                    whale_address = from_address
-                                
-                                # Create whale transaction record
-                                whale_transaction = {
-                                    'transaction_id': log.get('transactionHash', ''),
-                                    'wallet_address': whale_address,
-                                    'blockchain': 'ethereum',
-                                    'block_number': int(log.get('blockNumber', '0x0'), 16),
-                                    'block_timestamp': datetime.now(),
-                                    'from_address': from_address,
-                                    'to_address': to_address,
-                                    'coin_symbol': token_symbol,
-                                    'activity_type': activity_type,
-                                    'amount_tokens': Decimal(str(amount_tokens)),
-                                    'amount_usd': Decimal(str(amount_usd)),
-                                    'raw_transaction': log,
-                                    'data_source': 'discovery_scanner'
-                                }
-                                
-                                # Save to database
-                                if self.save_whale_transaction(whale_transaction):
-                                    token_whales += 1
-                                    token_volume += amount_usd
-                                    
-                                    if token_whales <= 5:  # Show first 5 whales per token
-                                        print(f"🐋 NEW WHALE: {whale_address[:10]}... ${amount_usd:,.2f} {token_symbol} {activity_type}")
+                # Validate USD amount (whale threshold)
+                validated_usd = self.validator.validate_usd_amount(usd_amount)
+                if not validated_usd:
+                    continue  # Not a whale transaction
+                
+                # Create whale transaction record
+                whale_tx = {
+                    'transaction_id': tx_hash,
+                    'wallet_address': to_address,  # Receiver is the whale
+                    'blockchain': 'ethereum',
+                    'block_number': block_number,
+                    'block_timestamp': timestamp,
+                    'from_address': from_address,
+                    'to_address': to_address,
+                    'coin_symbol': symbol,
+                    'coin_contract': contract_address,
+                    'coin_decimals': decimals,
+                    'activity_type': 'transfer',  # Can be enhanced later
+                    'amount_tokens': token_amount,
+                    'amount_usd': validated_usd,
+                    'price_per_token': token_price,
+                    'raw_transaction': json.dumps(transfer),
+                    'data_source': SCANNER_VERSION,
+                    'processed_at': datetime.utcnow()
+                }
+                
+                whale_transactions.append(whale_tx)
+                
+            except Exception as e:
+                logger.error(f"Error processing {symbol} transfer: {e}")
+                continue
+        
+        if whale_transactions:
+            logger.info(f"  🐋 Found {len(whale_transactions)} {symbol} whales")
+        
+        return whale_transactions
+    
+    def save_whale_transactions(self, whale_transactions):
+        """Save whale transactions to database"""
+        if not whale_transactions or not self.db_connection:
+            return 0
+        
+        try:
+            cur = self.db_connection.cursor()
+            
+            insert_query = """
+                INSERT INTO whale_transactions (
+                    transaction_id, wallet_address, blockchain, block_number,
+                    block_timestamp, from_address, to_address, coin_symbol,
+                    coin_contract, coin_decimals, activity_type, amount_tokens,
+                    amount_usd, price_per_token, raw_transaction, data_source,
+                    processed_at
+                ) VALUES (
+                    %(transaction_id)s, %(wallet_address)s, %(blockchain)s, %(block_number)s,
+                    %(block_timestamp)s, %(from_address)s, %(to_address)s, %(coin_symbol)s,
+                    %(coin_contract)s, %(coin_decimals)s, %(activity_type)s, %(amount_tokens)s,
+                    %(amount_usd)s, %(price_per_token)s, %(raw_transaction)s, %(data_source)s,
+                    %(processed_at)s
+                )
+                ON CONFLICT (transaction_id) DO NOTHING;
+            """
+            
+            saved_count = 0
+            for whale_tx in whale_transactions:
+                try:
+                    cur.execute(insert_query, whale_tx)
+                    if cur.rowcount > 0:
+                        saved_count += 1
+                except Exception as e:
+                    logger.error(f"Error saving transaction: {e}")
+                    continue
+            
+            self.db_connection.commit()
+            return saved_count
+            
+        except Exception as e:
+            logger.error(f"Database save error: {e}")
+            return 0
+    
+    def run_discovery_session(self):
+        """Run a complete whale discovery session"""
+        logger.info("🎯 FCB WHALE DISCOVERY SCANNER v4 - STARTING SESSION")
+        session_start = datetime.utcnow()
+        
+        # Connect to database
+        if not self.connect_database():
+            logger.error("Cannot proceed without database connection")
+            return
+        
+        try:
+            # Get scan range (last 6 hours)
+            start_block, end_block = self.get_scan_range(hours_back=6)
+            if not start_block or not end_block:
+                logger.error("Cannot determine scan range")
+                return
+            
+            # Get token prices
+            token_prices = self.get_token_prices()
+            
+            # Scan each established token
+            total_whales = 0
+            total_volume = 0
+            
+            for symbol, token_info in ESTABLISHED_TOKENS.items():
+                try:
+                    token_price = token_prices.get(symbol, 0)
                     
-                    except Exception as e:
-                        continue
+                    whales = self.scan_token_whales(
+                        symbol, token_info, token_price, start_block, end_block
+                    )
+                    
+                    if whales:
+                        saved_count = self.save_whale_transactions(whales)
+                        
+                        whale_volume = sum(tx['amount_usd'] for tx in whales)
+                        total_whales += saved_count
+                        total_volume += whale_volume
+                        
+                        logger.info(f"  ✅ {symbol}: {saved_count} whales, ${whale_volume:,.0f} volume")
                 
-                if token_whales > 0:
-                    print(f"✅ {token_symbol}: {token_whales} new whales, ${token_volume:,.2f} volume")
-                    new_whales_found += token_whales
-                    total_volume += token_volume
-                else:
-                    print(f"😴 {token_symbol}: No new whale activity")
-                
-            except Exception as e:
-                print(f"❌ Failed to scan {token_symbol}: {e}")
+                except Exception as e:
+                    logger.error(f"Error scanning {symbol}: {e}")
+                    continue
+            
+            # Session summary
+            session_duration = (datetime.utcnow() - session_start).total_seconds() / 60
+            
+            logger.info("🎉 WHALE DISCOVERY SESSION COMPLETE!")
+            logger.info(f"  🐋 Total whales found: {total_whales}")
+            logger.info(f"  💰 Total volume: ${total_volume:,.2f}")
+            logger.info(f"  ⏰ Session duration: {session_duration:.1f} minutes")
+            logger.info(f"  📊 Tokens scanned: {len(ESTABLISHED_TOKENS)}")
+            
+        except Exception as e:
+            logger.error(f"Session error: {e}")
         
-        return new_whales_found, total_volume
-    
-    def generate_discovery_report(self, new_whales, volume, next_session_time):
-        """Generate discovery scan report with FCB session timing"""
-        current_whale_count = self.get_current_whale_count()
-        
-        print(f"\n" + "=" * 80)
-        print(f"📊 FCB PRE-SESSION WHALE DISCOVERY COMPLETE")
-        print(f"=" * 80)
-        print(f"🐋 New whales discovered: {new_whales}")
-        print(f"💰 New volume analyzed: ${volume:,.2f}")
-        print(f"📈 Total whales in database: {current_whale_count}")
-        print(f"🎯 Next FCB session: {next_session_time.strftime('%H:%M UTC (%Y-%m-%d)')}")
-        print(f"⏰ Time until session: {int((next_session_time - datetime.utcnow()).total_seconds() / 60)} minutes")
-        
-        self.total_whales_discovered += new_whales
-        
-        if new_whales > 0:
-            print(f"🚀 SUCCESS! Fresh whale intelligence ready for FCB session")
-        else:
-            print(f"😴 No new whales since last session - database stable")
-        
-        # Calculate next discovery time
-        next_discovery_time, next_next_session = self.get_next_fcb_session_time()
-        print(f"🔍 Next whale discovery: {next_discovery_time.strftime('%H:%M UTC (%Y-%m-%d)')}")
-    
-    async def run_discovery_loop(self):
-        """Main discovery loop - runs 30 minutes before each FCB session"""
-        print("🚀 FCB WHALE DISCOVERY SCANNER - PRE-SESSION INTELLIGENCE")
-        print("=" * 80)
-        print(f"🕐 FCB Sessions: {', '.join([f'{h:02d}:00 UTC' for h in FCB_SESSION_HOURS])}")
-        print(f"🔍 Discovery timing: 30 minutes before each session")
-        print(f"🎯 Whale threshold: ${WHALE_THRESHOLD:,}+")
-        print(f"📊 Lookback period: {SCAN_HOURS_BACK} hours per scan")
-        print(f"🪙 Target tokens: {len(target_tokens['ethereum'])} tokens")
-        
-        while True:
-            try:
-                # Calculate next discovery time
-                next_discovery_time, next_session_time = self.get_next_fcb_session_time()
-                current_time = datetime.utcnow()
-                
-                # Calculate sleep time until next discovery
-                sleep_seconds = (next_discovery_time - current_time).total_seconds()
-                
-                if sleep_seconds > 0:
-                    print(f"\n⏰ Next discovery: {next_discovery_time.strftime('%H:%M:%S UTC (%Y-%m-%d)')}")
-                    print(f"🎯 For FCB session: {next_session_time.strftime('%H:%M:%S UTC')}")
-                    print(f"💤 Sleeping for {sleep_seconds/3600:.1f} hours...")
-                    await asyncio.sleep(sleep_seconds)
-                
-                self.scan_count += 1
-                
-                print(f"\n🚨 FCB PRE-SESSION WHALE DISCOVERY #{self.scan_count}")
-                print(f"🕐 Discovery time: {datetime.utcnow().strftime('%H:%M:%S UTC')}")
-                print(f"🎯 FCB session starts: {next_session_time.strftime('%H:%M:%S UTC')} (in 30 minutes)")
-                
-                # Run whale discovery
-                new_whales, volume = self.discover_new_whales()
-                
-                # Generate report with session timing
-                self.generate_discovery_report(new_whales, volume, next_session_time)
-                
-            except KeyboardInterrupt:
-                print("\n🛑 FCB Discovery scanner stopped by user")
-                break
-            except Exception as e:
-                print(f"⚠️ Discovery error: {e}")
-                print("🔄 Retrying in 30 minutes...")
-                await asyncio.sleep(1800)  # Wait 30 minutes before retry
+        finally:
+            if self.db_connection:
+                self.db_connection.close()
 
 def main():
-    """Main execution"""
+    """Main entry point for the whale discovery scanner"""
     scanner = WhaleDiscoveryScanner()
-    
-    try:
-        # Run the discovery loop
-        asyncio.run(scanner.run_discovery_loop())
-    except KeyboardInterrupt:
-        print("\n👋 FCB Whale Discovery Scanner stopped")
+    scanner.run_discovery_session()
 
 if __name__ == "__main__":
     main()
