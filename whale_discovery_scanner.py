@@ -1,34 +1,49 @@
 #!/usr/bin/env python3
-print("🚀 MINIMAL WHALE SCANNER STARTING...")
+
+# Force output flushing
+import sys
 import os
-print("✅ OS imported")
-import requests
-print("✅ Requests imported")
-import psycopg as psycopg2
-print("✅ Psycopg imported")
+sys.stdout.reconfigure(line_buffering=True)
+sys.stderr.reconfigure(line_buffering=True)
 
-# Test environment variables
-db_url = os.getenv('DB_URL')
-print(f"📊 DB_URL exists: {bool(db_url)}")
-if db_url:
-    print(f"📊 DB_URL first 30 chars: {db_url[:30]}...")
+print("🔍 DEBUG: Script starting...", flush=True)
 
-# Test database connection
 try:
+    print("🔍 DEBUG: About to import os", flush=True)
+    import os
+    print("✅ OS imported successfully", flush=True)
+    
+    print("🔍 DEBUG: About to import requests", flush=True)
+    import requests
+    print("✅ Requests imported successfully", flush=True)
+    
+    print("🔍 DEBUG: About to import psycopg", flush=True)
+    import psycopg as psycopg2
+    print("✅ Psycopg imported successfully", flush=True)
+    
+    print("🔍 DEBUG: All imports successful", flush=True)
+    
+    # Check environment variables
+    print("🔍 DEBUG: Checking environment variables", flush=True)
+    db_url = os.getenv('DB_URL')
+    print(f"📊 DB_URL exists: {bool(db_url)}", flush=True)
+    
     if db_url:
-        conn = psycopg2.connect(db_url)
-        print("✅ Database connection successful!")
-        conn.close()
+        print(f"📊 DB_URL first 30 chars: {db_url[:30]}...", flush=True)
     else:
-        print("❌ No DB_URL found")
+        print("❌ DB_URL is None", flush=True)
+    
+    print("🎉 DEBUG VERSION COMPLETE!", flush=True)
+    
+    # Keep running
+    import time
+    print("💤 Keeping service alive...", flush=True)
+    while True:
+        time.sleep(60)
+        print("💤 Still running...", flush=True)
+        
 except Exception as e:
-    print(f"❌ Database connection failed: {e}")
-
-print("🎉 MINIMAL TEST COMPLETE!")
-
-# Keep service running
-import time
-print("💤 Keeping service alive...")
-while True:
-    time.sleep(60)
-    print("💤 Still running...")
+    print(f"❌ ERROR: {e}", flush=True)
+    import traceback
+    traceback.print_exc()
+    print("❌ Script failed!", flush=True)
