@@ -15,6 +15,9 @@ import asyncio
 from datetime import datetime, timedelta
 from decimal import Decimal
 
+print("🚀 SCRIPT STARTING - TESTING...")
+print(f"📊 Environment check - DB_URL exists: {bool(os.getenv('DB_URL'))}")
+
 # Database configuration
 DATABASE_URL = os.getenv('DB_URL', "postgresql://wallet_admin:AbRD14errRCD6H793FRCcPvXIRLgNugK@dpg-d1vd05je5dus739m8mv0-a.frankfurt-postgres.render.com:5432/wallet_transactions")
 
