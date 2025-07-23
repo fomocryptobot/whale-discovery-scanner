@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-FCB Whale Discovery Scanner v4.2 - TRANSACTION FIX
-Fixed database transaction handling to prevent cascade failures
+FCB Whale Discovery Scanner v5.0 - CRON OPTIMIZED
+Converted from service to cron job - runs immediately and exits cleanly
 """
 
 import requests
@@ -20,16 +20,24 @@ except ImportError:
     import psycopg
     from psycopg import IntegrityError, DataError
 
-# Configuration
-DB_URL = os.getenv('DB_URL', 'postgresql://wallet_admin:AbRD14errRCD6H793FRCcPvXIRLgNugK@dpg-d1vd05je5dus739m8mv0-a.frankfurt-postgres.render.com:5432/wallet_transactions')
-ETHERSCAN_API_KEY = os.getenv('ETHERSCAN_API_KEY', 'GCB4J11T34YG29GNJJX7R7JADRTAFJKPDE')
-COINGECKO_API_KEY = os.getenv('COINGECKO_API_KEY', 'CG-bJP1bqyMemFNQv5dp4nvA9xm')
+# Configuration - ALL KEYS FROM ENVIRONMENT VARIABLES
+DB_URL = os.getenv('TRINITY_DATABASE_URL')
+ETHERSCAN_API_KEY = os.getenv('ETHERSCAN_API_KEY')
+COINGECKO_API_KEY = os.getenv('COINGECKO_API_KEY')
+
+# Validate required environment variables
+if not DB_URL:
+    raise ValueError("❌ TRINITY_DATABASE_URL environment variable is required")
+if not ETHERSCAN_API_KEY:
+    raise ValueError("❌ ETHERSCAN_API_KEY environment variable is required") 
+if not COINGECKO_API_KEY:
+    raise ValueError("❌ COINGECKO_API_KEY environment variable is required")
 
 WHALE_THRESHOLD_USD = 1000
-ETHERSCAN_DELAY = 1.0  # Increased delay to reduce API errors
+ETHERSCAN_DELAY = 1.0
 COINGECKO_DELAY = 0.15
 MAX_USD_AMOUNT = 100_000_000
-SCANNER_VERSION = "whale_discovery_v4.2"
+SCANNER_VERSION = "whale_discovery_v5.0_cron"
 
 # CoinGecko Pro API
 COINGECKO_PRO_BASE_URL = "https://pro-api.coingecko.com/api/v3"
@@ -183,7 +191,7 @@ class CoinGeckoProAPI:
             return {}
 
 class WhaleScanner:
-    """Main whale scanner with fixed transaction handling"""
+    """Main whale scanner optimized for cron execution"""
     
     def __init__(self):
         self.etherscan = EtherscanAPI(ETHERSCAN_API_KEY)
@@ -362,45 +370,21 @@ class WhaleScanner:
         
         return whale_transactions
     
-    def should_run_scheduled_scan(self):
-        """Check if it's time for the scheduled 23:30 UTC scan"""
-        from datetime import timezone
-        now = datetime.now(timezone.utc)
-        # Run at 23:30, 05:30, 11:30, 17:30 UTC (every 6 hours from 23:30)
-        target_hours = [23, 5, 11, 17]
-        return (now.hour in target_hours and 30 <= now.minute <= 35)
-
-    def get_next_scan_time(self):
-        """Get the next scheduled scan time"""
-        from datetime import timezone
-        now = datetime.now(timezone.utc)
-        target_hours = [23, 5, 11, 17]
-        
-        for hour in target_hours:
-            if hour > now.hour or (hour == now.hour and now.minute < 30):
-                return f"{hour:02d}:30 UTC today"
-        
-        return "23:30 UTC tomorrow"
-
     def run_scan(self):
-        """Execute whale scan with improved error handling"""
-        # Check if it's the right time to run
-        if not self.should_run_scheduled_scan():
-            logger.info(f"⏰ Waiting for scheduled time. Next scan at: {self.get_next_scan_time()}")
-            return
-            
-        logger.info("🎯 FCB WHALE DISCOVERY SCANNER v4.2 - STARTING")
+        """Execute whale scan - CRON OPTIMIZED (no time checks, runs immediately)"""
+        logger.info("🎯 FCB WHALE DISCOVERY SCANNER v5.0 - CRON MODE STARTING")
         start_time = datetime.utcnow()
         
         if not self.connect_database():
-            return
+            logger.error("❌ Database connection failed - exiting")
+            return False
         
         try:
             # Get latest block
             latest_block = self.etherscan.get_latest_block()
             if latest_block <= 0:
-                logger.error("Cannot determine latest block")
-                return
+                logger.error("❌ Cannot determine latest block - exiting")
+                return False
             
             # Calculate 6-hour scan range
             blocks_per_hour = 300  # ~12 seconds per block
@@ -412,6 +396,10 @@ class WhaleScanner:
             # Get token prices
             coingecko_ids = [info['coingecko_id'] for info in TOP_TOKENS.values()]
             prices = self.coingecko.get_multiple_prices(coingecko_ids)
+            
+            if not prices:
+                logger.error("❌ No token prices retrieved - exiting")
+                return False
             
             # Scan each token
             total_whales = 0
@@ -441,7 +429,7 @@ class WhaleScanner:
                         logger.info(f"  ⚪ {symbol}: No whales found")
                     
                 except Exception as e:
-                    logger.error(f"Error scanning {symbol}: {e}")
+                    logger.error(f"❌ Error scanning {symbol}: {e}")
                     continue
             
             # Session summary
@@ -453,16 +441,28 @@ class WhaleScanner:
             logger.info(f"  ⏰ Duration: {duration:.1f} minutes")
             logger.info(f"  📊 Tokens scanned: {len(TOP_TOKENS)}")
             
+            return True
+            
         except Exception as e:
-            logger.error(f"Scan failed: {e}")
+            logger.error(f"❌ Scan failed: {e}")
+            return False
         
         finally:
             if self.db_connection:
                 self.db_connection.close()
+                logger.info("📝 Database connection closed")
 
 def main():
+    """Main entry point for cron execution"""
     scanner = WhaleScanner()
-    scanner.run_scan()
+    success = scanner.run_scan()
+    
+    if success:
+        logger.info("✅ Whale scanner completed successfully")
+        exit(0)  # Success exit code
+    else:
+        logger.error("❌ Whale scanner failed")
+        exit(1)  # Error exit code
 
 if __name__ == "__main__":
     main()
