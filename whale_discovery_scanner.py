@@ -4,13 +4,20 @@ FCB Whale Discovery Scanner v5.0 - CRON OPTIMIZED
 Converted from service to cron job - runs immediately and exits cleanly
 """
 
+import sys
+import os
+
+# IMMEDIATE DEBUG - before anything else
+print("🔧 STARTUP: Script starting...", flush=True)
+sys.stdout.flush()
+os.environ['PYTHONUNBUFFERED'] = '1'
+print("🔧 STARTUP: Unbuffered mode set", flush=True)
+
 import requests
 import time
 import json
-import os
 from datetime import datetime, timedelta
 import logging
-import sys
 
 try:
     import psycopg
@@ -21,10 +28,14 @@ except ImportError:
     import psycopg
     from psycopg import IntegrityError, DataError
 
+print("🔧 STARTUP: Modules imported", flush=True)
+
 # Configuration - ALL KEYS FROM ENVIRONMENT VARIABLES
 DB_URL = os.getenv('TRINITY_DATABASE_URL')
 ETHERSCAN_API_KEY = os.getenv('ETHERSCAN_API_KEY')
 COINGECKO_API_KEY = os.getenv('COINGECKO_API_KEY')
+
+print("🔧 STARTUP: Environment variables loaded", flush=True)
 
 # Validate required environment variables
 if not DB_URL:
@@ -33,6 +44,8 @@ if not ETHERSCAN_API_KEY:
     raise ValueError("❌ ETHERSCAN_API_KEY environment variable is required") 
 if not COINGECKO_API_KEY:
     raise ValueError("❌ COINGECKO_API_KEY environment variable is required")
+
+print("🔧 STARTUP: Environment variables validated", flush=True)
 
 WHALE_THRESHOLD_USD = 1000
 ETHERSCAN_DELAY = 1.0
@@ -43,8 +56,7 @@ SCANNER_VERSION = "whale_discovery_v5.0_cron"
 # CoinGecko Pro API
 COINGECKO_PRO_BASE_URL = "https://pro-api.coingecko.com/api/v3"
 
-# CRITICAL: Force unbuffered output for Render Cron Jobs
-os.environ['PYTHONUNBUFFERED'] = '1'
+# Additional stdout configuration
 sys.stdout.reconfigure(line_buffering=True)
 sys.stderr.reconfigure(line_buffering=True)
 
