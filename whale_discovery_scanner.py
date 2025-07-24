@@ -10,12 +10,13 @@ import json
 import os
 from datetime import datetime, timedelta
 import logging
+import sys
 
 try:
     import psycopg
     from psycopg import IntegrityError, DataError
 except ImportError:
-    print("❌ Installing psycopg...")
+    print("❌ Installing psycopg...", flush=True)
     os.system("pip install psycopg[binary]")
     import psycopg
     from psycopg import IntegrityError, DataError
@@ -42,8 +43,23 @@ SCANNER_VERSION = "whale_discovery_v5.0_cron"
 # CoinGecko Pro API
 COINGECKO_PRO_BASE_URL = "https://pro-api.coingecko.com/api/v3"
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# CRITICAL: Force unbuffered output for Render Cron Jobs
+os.environ['PYTHONUNBUFFERED'] = '1'
+sys.stdout.reconfigure(line_buffering=True)
+sys.stderr.reconfigure(line_buffering=True)
+
+# Enhanced logging for Render Cron Jobs
+logging.basicConfig(
+    level=logging.INFO, 
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)],
+    force=True
+)
 logger = logging.getLogger(__name__)
+
+# Test log - this should appear in Render logs
+logger.info("🚀 WHALE SCANNER CRON JOB STARTING")
+logger.info(f"⏰ Execution time: {datetime.utcnow()}")
 
 # High-value whale intelligence: Stablecoins + Blue Chips
 TOP_TOKENS = {
@@ -82,6 +98,7 @@ class EtherscanAPI:
                     try:
                         block_num = int(data['result'], 16)
                         logger.info(f"✅ Latest block: {block_num:,}")
+                        sys.stdout.flush()
                         return block_num
                     except (ValueError, TypeError):
                         pass
@@ -204,14 +221,16 @@ class WhaleScanner:
             self.db_connection = psycopg.connect(DB_URL)
             self.db_connection.autocommit = False  # Enable transaction control
             logger.info("✅ Database connected")
+            sys.stdout.flush()
             return True
         except Exception as e:
             logger.error(f"❌ Database connection failed: {e}")
+            sys.stderr.flush()
             return False
     
     def validate_transaction_data(self, tx):
         """Validate transaction data before database insert"""
-        required_fields = ['transaction_id', 'wallet_address', 'coin_symbol', 'amount_usd']
+        required_fields = ['symbol', 'transaction_hash', 'whale_address', 'amount_usd']
         
         try:
             # Check required fields
@@ -219,12 +238,12 @@ class WhaleScanner:
                 if field not in tx or tx[field] is None or tx[field] == '':
                     return False
             
-            # Validate transaction ID format
-            if not isinstance(tx['transaction_id'], str) or not tx['transaction_id'].startswith('0x'):
+            # Validate transaction hash format
+            if not isinstance(tx['transaction_hash'], str) or not tx['transaction_hash'].startswith('0x'):
                 return False
             
-            # Validate wallet address format  
-            if not isinstance(tx['wallet_address'], str) or len(tx['wallet_address']) != 42:
+            # Validate whale address format  
+            if not isinstance(tx['whale_address'], str) or len(tx['whale_address']) != 42:
                 return False
             
             # Validate USD amount range
@@ -247,27 +266,19 @@ class WhaleScanner:
         for tx in transactions:
             # Validate each transaction before attempting to save
             if not self.validate_transaction_data(tx):
-                logger.debug(f"Skipping invalid transaction: {tx.get('transaction_id', 'unknown')}")
+                logger.debug(f"Skipping invalid transaction: {tx.get('transaction_hash', 'unknown')}")
                 continue
             
             try:
                 cur = self.db_connection.cursor()
                 
                 query = """
-                    INSERT INTO whale_transactions (
-                        transaction_id, wallet_address, blockchain, block_number,
-                        block_timestamp, from_address, to_address, coin_symbol,
-                        coin_contract, coin_decimals, activity_type, amount_tokens,
-                        amount_usd, price_per_token, raw_transaction, data_source,
-                        processed_at
+                    INSERT INTO whale_activities (
+                        symbol, transaction_hash, whale_address, amount_usd, transaction_type, detected_at
                     ) VALUES (
-                        %(transaction_id)s, %(wallet_address)s, %(blockchain)s, %(block_number)s,
-                        %(block_timestamp)s, %(from_address)s, %(to_address)s, %(coin_symbol)s,
-                        %(coin_contract)s, %(coin_decimals)s, %(activity_type)s, %(amount_tokens)s,
-                        %(amount_usd)s, %(price_per_token)s, %(raw_transaction)s, %(data_source)s,
-                        %(processed_at)s
+                        %(symbol)s, %(transaction_hash)s, %(whale_address)s, %(amount_usd)s, %(transaction_type)s, %(detected_at)s
                     )
-                    ON CONFLICT (transaction_id) DO NOTHING;
+                    ON CONFLICT (transaction_hash) DO NOTHING;
                 """
                 
                 cur.execute(query, tx)
@@ -340,23 +351,12 @@ class WhaleScanner:
                 
                 # Create transaction record
                 whale_tx = {
-                    'transaction_id': tx_hash,
-                    'wallet_address': to_addr,  # Receiver is the whale
-                    'blockchain': 'ethereum',
-                    'block_number': int(transfer.get('blockNumber', 0)),
-                    'block_timestamp': datetime.fromtimestamp(int(transfer.get('timeStamp', 0))),
-                    'from_address': from_addr,
-                    'to_address': to_addr,
-                    'coin_symbol': symbol,
-                    'coin_contract': token_info['address'].lower(),
-                    'coin_decimals': token_info['decimals'],
-                    'activity_type': 'transfer',
-                    'amount_tokens': token_amount,
+                    'symbol': symbol,
+                    'transaction_hash': tx_hash,
+                    'whale_address': to_addr,  # Receiver is the whale
                     'amount_usd': round(usd_amount, 2),
-                    'price_per_token': token_price,
-                    'raw_transaction': json.dumps(transfer),
-                    'data_source': SCANNER_VERSION,
-                    'processed_at': datetime.utcnow()
+                    'transaction_type': 'buy',  # Large incoming transfer = buy
+                    'detected_at': datetime.utcnow()
                 }
                 
                 whale_transactions.append(whale_tx)
@@ -373,6 +373,7 @@ class WhaleScanner:
     def run_scan(self):
         """Execute whale scan - CRON OPTIMIZED (no time checks, runs immediately)"""
         logger.info("🎯 FCB WHALE DISCOVERY SCANNER v5.0 - CRON MODE STARTING")
+        sys.stdout.flush()
         start_time = datetime.utcnow()
         
         if not self.connect_database():
@@ -440,6 +441,7 @@ class WhaleScanner:
             logger.info(f"  💰 Total volume: ${total_volume:,.2f}")
             logger.info(f"  ⏰ Duration: {duration:.1f} minutes")
             logger.info(f"  📊 Tokens scanned: {len(TOP_TOKENS)}")
+            sys.stdout.flush()
             
             return True
             
@@ -451,6 +453,7 @@ class WhaleScanner:
             if self.db_connection:
                 self.db_connection.close()
                 logger.info("📝 Database connection closed")
+                sys.stdout.flush()
 
 def main():
     """Main entry point for cron execution"""
@@ -459,9 +462,11 @@ def main():
     
     if success:
         logger.info("✅ Whale scanner completed successfully")
+        sys.stdout.flush()
         exit(0)  # Success exit code
     else:
         logger.error("❌ Whale scanner failed")
+        sys.stderr.flush()
         exit(1)  # Error exit code
 
 if __name__ == "__main__":
