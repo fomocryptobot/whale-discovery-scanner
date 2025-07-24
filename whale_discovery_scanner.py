@@ -372,10 +372,12 @@ class WhaleScanner:
     
     def run_scan(self):
         """Execute whale scan - CRON OPTIMIZED (no time checks, runs immediately)"""
+        print("🔧 RUN_SCAN: Function started", flush=True)
         logger.info("🎯 FCB WHALE DISCOVERY SCANNER v5.0 - CRON MODE STARTING")
         sys.stdout.flush()
         start_time = datetime.utcnow()
         
+        print("🔧 RUN_SCAN: About to connect to database", flush=True)
         if not self.connect_database():
             logger.error("❌ Database connection failed - exiting")
             return False
@@ -457,8 +459,20 @@ class WhaleScanner:
 
 def main():
     """Main entry point for cron execution"""
-    scanner = WhaleScanner()
-    success = scanner.run_scan()
+    print("🔧 MAIN: Starting main function", flush=True)
+    
+    try:
+        print("🔧 MAIN: Creating WhaleScanner instance", flush=True)
+        scanner = WhaleScanner()
+        
+        print("🔧 MAIN: Starting run_scan", flush=True)
+        success = scanner.run_scan()
+        
+    except Exception as e:
+        print(f"🔧 MAIN: Exception caught: {e}", flush=True)
+        logger.error(f"❌ Main function failed: {e}")
+        sys.stderr.flush()
+        exit(1)
     
     if success:
         logger.info("✅ Whale scanner completed successfully")
