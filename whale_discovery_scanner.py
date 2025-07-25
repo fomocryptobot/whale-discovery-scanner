@@ -442,6 +442,18 @@ class WhaleScanner:
             logger.error("❌ Database connection failed - exiting")
             return False
         
+        # DEBUG: Check actual database schema
+        try:
+            cur = self.db_connection.cursor()
+            cur.execute("SELECT column_name, data_type, character_maximum_length FROM information_schema.columns WHERE table_name = 'whale_transactions' ORDER BY column_name;")
+            schema_info = cur.fetchall()
+            logger.info("🔍 ACTUAL DATABASE SCHEMA:")
+            for col_name, data_type, max_length in schema_info:
+                logger.info(f"  {col_name}: {data_type}({max_length})")
+            cur.close()
+        except Exception as e:
+            logger.warning(f"Could not check schema: {e}")
+        
         try:
             # Get latest block
             latest_block = self.etherscan.get_latest_block()
