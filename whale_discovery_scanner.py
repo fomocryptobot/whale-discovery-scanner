@@ -308,6 +308,19 @@ class WhaleScanner:
                     ON CONFLICT (transaction_id) DO NOTHING;
                 """
                 
+                # Debug: Check field lengths before insert
+                if len(tx.get('blockchain', '')) > 32:
+                    logger.warning(f"blockchain too long: {len(tx['blockchain'])} chars")
+                if len(tx.get('data_source', '')) > 32:
+                    logger.warning(f"data_source too long: {len(tx['data_source'])} chars")
+                if len(tx.get('coin_symbol', '')) > 16:
+                    logger.warning(f"coin_symbol too long: {len(tx['coin_symbol'])} chars")
+                
+                # Debug: Check ALL field lengths before insert
+                for field_name, field_value in tx.items():
+                    if isinstance(field_value, str) and len(field_value) > 32:
+                        logger.warning(f"Field '{field_name}' too long: {len(field_value)} chars = '{field_value[:50]}...'")
+                
                 cur.execute(query, tx)
                 
                 if cur.rowcount > 0:
@@ -380,7 +393,7 @@ class WhaleScanner:
                 whale_tx = {
                     'transaction_id': tx_hash,
                     'wallet_address': to_addr,  # Receiver is the whale
-                    'blockchain': 'ethereum',
+                    'blockchain': 'eth',
                     'block_number': int(transfer.get('blockNumber', 0)) if transfer.get('blockNumber') else None,
                     'block_timestamp': datetime.fromtimestamp(int(transfer.get('timeStamp', 0))),
                     'transaction_index': int(transfer.get('transactionIndex', 0)) if transfer.get('transactionIndex') else None,
