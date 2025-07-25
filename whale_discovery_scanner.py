@@ -242,7 +242,7 @@ class WhaleScanner:
     
     def validate_transaction_data(self, tx):
         """Validate transaction data before database insert"""
-        required_fields = ['symbol', 'transaction_hash', 'whale_address', 'amount_usd']
+        required_fields = ['transaction_id', 'wallet_address', 'blockchain', 'coin_symbol', 'amount_tokens', 'amount_usd']
         
         try:
             # Check required fields
@@ -250,12 +250,12 @@ class WhaleScanner:
                 if field not in tx or tx[field] is None or tx[field] == '':
                     return False
             
-            # Validate transaction hash format
-            if not isinstance(tx['transaction_hash'], str) or not tx['transaction_hash'].startswith('0x'):
+            # Validate transaction ID format
+            if not isinstance(tx['transaction_id'], str) or not tx['transaction_id'].startswith('0x'):
                 return False
             
-            # Validate whale address format  
-            if not isinstance(tx['whale_address'], str) or len(tx['whale_address']) != 42:
+            # Validate wallet address format  
+            if not isinstance(tx['wallet_address'], str) or len(tx['wallet_address']) != 42:
                 return False
             
             # Validate USD amount range
@@ -278,19 +278,34 @@ class WhaleScanner:
         for tx in transactions:
             # Validate each transaction before attempting to save
             if not self.validate_transaction_data(tx):
-                logger.debug(f"Skipping invalid transaction: {tx.get('transaction_hash', 'unknown')}")
+                logger.debug(f"Skipping invalid transaction: {tx.get('transaction_id', 'unknown')}")
                 continue
             
             try:
                 cur = self.db_connection.cursor()
                 
+                # First ensure wallet exists
+                wallet_query = """
+                    INSERT INTO wallet_accounts (wallet_address) 
+                    VALUES (%(wallet_address)s) 
+                    ON CONFLICT (wallet_address) DO NOTHING;
+                """
+                cur.execute(wallet_query, {'wallet_address': tx['wallet_address']})
+                
+                # Then insert whale transaction
                 query = """
-                    INSERT INTO whale_activities (
-                        symbol, transaction_hash, whale_address, amount_usd, transaction_type, detected_at
+                    INSERT INTO whale_transactions (
+                        transaction_id, wallet_address, blockchain, block_number, block_timestamp,
+                        transaction_index, from_address, to_address, gas_used, gas_price,
+                        coin_symbol, coin_contract, coin_decimals, activity_type, amount_tokens,
+                        amount_usd, price_per_token, raw_transaction, data_source, processed_at
                     ) VALUES (
-                        %(symbol)s, %(transaction_hash)s, %(whale_address)s, %(amount_usd)s, %(transaction_type)s, %(detected_at)s
+                        %(transaction_id)s, %(wallet_address)s, %(blockchain)s, %(block_number)s, %(block_timestamp)s,
+                        %(transaction_index)s, %(from_address)s, %(to_address)s, %(gas_used)s, %(gas_price)s,
+                        %(coin_symbol)s, %(coin_contract)s, %(coin_decimals)s, %(activity_type)s, %(amount_tokens)s,
+                        %(amount_usd)s, %(price_per_token)s, %(raw_transaction)s, %(data_source)s, %(processed_at)s
                     )
-                    ON CONFLICT (transaction_hash) DO NOTHING;
+                    ON CONFLICT (transaction_id) DO NOTHING;
                 """
                 
                 cur.execute(query, tx)
@@ -363,12 +378,27 @@ class WhaleScanner:
                 
                 # Create transaction record
                 whale_tx = {
-                    'symbol': symbol,
-                    'transaction_hash': tx_hash,
-                    'whale_address': to_addr,  # Receiver is the whale
+                    'transaction_id': tx_hash,
+                    'wallet_address': to_addr,  # Receiver is the whale
+                    'blockchain': 'ethereum',
+                    'block_number': int(transfer.get('blockNumber', 0)) if transfer.get('blockNumber') else None,
+                    'block_timestamp': datetime.fromtimestamp(int(transfer.get('timeStamp', 0))),
+                    'transaction_index': int(transfer.get('transactionIndex', 0)) if transfer.get('transactionIndex') else None,
+                    'from_address': from_addr if from_addr else None,
+                    'to_address': to_addr if to_addr else None,
+                    'gas_used': int(transfer.get('gasUsed', 0)) if transfer.get('gasUsed') else None,
+                    'gas_price': int(transfer.get('gasPrice', 0)) if transfer.get('gasPrice') else None,
+                    'transaction_fee_usd': None,  # Calculate if needed
+                    'coin_symbol': symbol,
+                    'coin_contract': token_info['address'].lower(),
+                    'coin_decimals': token_info['decimals'],
+                    'activity_type': 'transfer',  # Use lowercase as required
+                    'amount_tokens': token_amount,
                     'amount_usd': round(usd_amount, 2),
-                    'transaction_type': 'buy',  # Large incoming transfer = buy
-                    'detected_at': datetime.utcnow()
+                    'price_per_token': token_price,
+                    'raw_transaction': transfer,  # Full transfer data as dict
+                    'data_source': SCANNER_VERSION,
+                    'processed_at': datetime.utcnow()
                 }
                 
                 whale_transactions.append(whale_tx)
