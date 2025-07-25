@@ -333,7 +333,7 @@ class WhaleScanner:
                 self.db_connection.rollback()
                 
             except Exception as e:
-                logger.warning(f"Database error: {str(e)[:100]}")
+                logger.warning(f"Database error: {type(e).__name__}: {str(e)[:200]}")
                 self.db_connection.rollback()
             
             finally:
