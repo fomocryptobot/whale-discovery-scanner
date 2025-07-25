@@ -355,6 +355,9 @@ class WhaleScanner:
         
         logger.info(f"🔍 Scanning {symbol} (${token_price:.6f})...")
         
+        # Track unique transactions in this scan to prevent duplicates
+        seen_transactions = set()
+        
         transfers = self.etherscan.get_token_transfers(
             token_info['address'], start_block, end_block
         )
@@ -375,6 +378,11 @@ class WhaleScanner:
                 
                 if not tx_hash or not from_addr or not to_addr or raw_amount == '0':
                     continue
+                
+                # Skip if we've already processed this transaction in this scan
+                if tx_hash in seen_transactions:
+                    continue
+                seen_transactions.add(tx_hash)
                 
                 # Calculate token amount (handle decimals properly)
                 try:
