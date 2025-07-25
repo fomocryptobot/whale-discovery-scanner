@@ -51,7 +51,7 @@ WHALE_THRESHOLD_USD = 1000
 ETHERSCAN_DELAY = 1.0
 COINGECKO_DELAY = 0.15
 MAX_USD_AMOUNT = 100_000_000
-SCANNER_VERSION = "whale_discovery_v5.0_cron"
+SCANNER_VERSION = "whale_discovery_v5.2_force_rebuild"
 
 # CoinGecko Pro API
 COINGECKO_PRO_BASE_URL = "https://pro-api.coingecko.com/api/v3"
