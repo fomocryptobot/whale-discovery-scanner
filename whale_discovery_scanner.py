@@ -316,16 +316,6 @@ class WhaleScanner:
                 if len(tx.get('coin_symbol', '')) > 16:
                     logger.warning(f"coin_symbol too long: {len(tx['coin_symbol'])} chars")
                 
-                # AGGRESSIVE DEBUG: Check ALL field lengths
-                logger.info(f"DEBUG: About to insert transaction {tx.get('transaction_id', 'unknown')}")
-                for field_name, field_value in tx.items():
-                    if isinstance(field_value, str):
-                        field_len = len(field_value)
-                        if field_len > 32:
-                            logger.warning(f"FIELD TOO LONG: '{field_name}' = {field_len} chars = '{field_value[:50]}...'")
-                        elif field_len > 20:  # Show potentially problematic fields
-                            logger.info(f"FIELD LENGTH: '{field_name}' = {field_len} chars = '{field_value}'")
-                
                 cur.execute(query, tx)
                 
                 if cur.rowcount > 0:
