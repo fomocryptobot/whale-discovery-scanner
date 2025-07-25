@@ -30,6 +30,10 @@ except ImportError:
 
 print("🔧 STARTUP: Modules imported", flush=True)
 
+# RENDER CACHE BUST v6.0 - 2025-07-25-01-20-UTC
+# FORCE COMPLETE REBUILD - SCHEMA FIXED, DEBUGGING ENABLED
+print("🔥 CACHE BUST v6.0 LOADING...", flush=True)
+
 # Configuration - ALL KEYS FROM ENVIRONMENT VARIABLES
 DB_URL = os.getenv('TRINITY_DATABASE_URL')
 ETHERSCAN_API_KEY = os.getenv('ETHERSCAN_API_KEY')
@@ -52,7 +56,7 @@ ETHERSCAN_DELAY = 1.0
 COINGECKO_DELAY = 0.15
 MAX_USD_AMOUNT = 100_000_000
 # RENDER FORCE REBUILD - 2025-07-25-00-40-UTC - JSONB FIX FINAL
-SCANNER_VERSION = "whale_discovery_v6.0_FINAL"
+SCANNER_VERSION = "whale_discovery_v6.0_CACHE_BUST"
 # CoinGecko Pro API
 COINGECKO_PRO_BASE_URL = "https://pro-api.coingecko.com/api/v3"
 
@@ -423,7 +427,7 @@ class WhaleScanner:
     def run_scan(self):
         """Execute whale scan - CRON OPTIMIZED (no time checks, runs immediately)"""
         print("🔧 RUN_SCAN: Function started", flush=True)
-        logger.info("🎯 FCB WHALE DISCOVERY SCANNER v5.0 - CRON MODE STARTING")
+        logger.info("🎯 FCB WHALE DISCOVERY SCANNER v6.0 - CACHE BUST MODE STARTING")
         sys.stdout.flush()
         start_time = datetime.utcnow()
         
