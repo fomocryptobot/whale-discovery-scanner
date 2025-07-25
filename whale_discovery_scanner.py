@@ -324,6 +324,8 @@ class WhaleScanner:
                 
                 if cur.rowcount > 0:
                     saved_count += 1
+                else:
+                    logger.debug(f"Skipped duplicate: {tx.get('transaction_id', 'unknown')[:16]}...")
                 
                 # Commit each transaction individually to avoid cascade failures
                 self.db_connection.commit()
