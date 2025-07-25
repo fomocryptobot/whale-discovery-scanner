@@ -396,7 +396,7 @@ class WhaleScanner:
                     'amount_tokens': token_amount,
                     'amount_usd': round(usd_amount, 2),
                     'price_per_token': token_price,
-                    'raw_transaction': transfer,  # Full transfer data as dict
+                    'raw_transaction': json.dumps(transfer),  # Convert dict to JSON string for JSONB
                     'data_source': SCANNER_VERSION,
                     'processed_at': datetime.utcnow()
                 }
