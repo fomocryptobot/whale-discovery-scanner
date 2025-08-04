@@ -52,7 +52,7 @@ if not COINGECKO_API_KEY:
 print("🔧 STARTUP: Environment variables validated", flush=True)
 
 WHALE_THRESHOLD_USD = 1000
-ETHERSCAN_DELAY = 1.0
+ETHERSCAN_DELAY = 0.1  # 10 calls/second for sequential whale scanning
 COINGECKO_DELAY = 0.15
 MAX_USD_AMOUNT = 100_000_000
 # RENDER FORCE REBUILD - 2025-07-25-00-40-UTC - JSONB FIX FINAL
@@ -77,7 +77,97 @@ logger = logging.getLogger(__name__)
 logger.info("🚀 WHALE SCANNER CRON JOB STARTING")
 logger.info(f"⏰ Execution time: {datetime.utcnow()}")
 
-# High-value whale intelligence: Stablecoins + Blue Chips
+def fetch_kraken_tradeable_symbols():
+    """Fetch all tradeable symbols from Kraken Universe Scanner API"""
+    try:
+        kraken_api_url = "https://kraken-scanner-webservice.onrender.com/tradeable/coins"
+        response = requests.get(kraken_api_url, timeout=30)
+        
+        if response.status_code == 200:
+            data = response.json()
+            coins = data.get('coins', [])
+            
+            logger.info(f"✅ Fetched {len(coins)} tradeable symbols from Kraken API")
+            
+            # Convert to format expected by scanner
+            token_dict = {}
+            for coin in coins:
+                symbol = coin.get('symbol', '').upper()
+                if symbol and coin.get('tradeable', False):
+                    # Try to get contract info for any symbol - no hardcoded filter
+                    contract_info = get_ethereum_contract_info(symbol)
+                    if contract_info:
+                        token_dict[symbol] = contract_info
+            
+            logger.info(f"📊 Mapped {len(token_dict)} Ethereum tokens for whale scanning")
+            return token_dict
+            
+        else:
+            logger.error(f"❌ Kraken API error: HTTP {response.status_code}")
+            return {}
+            
+    except Exception as e:
+        logger.error(f"❌ Failed to fetch Kraken symbols: {e}")
+        return {}
+
+def get_ethereum_contract_info(symbol):
+    """Get Ethereum contract address and info for symbol - expanded mapping from other scanners"""
+    # Comprehensive Ethereum contract addresses from all 5 whale scanners
+    ethereum_contracts = {
+        # Blue-chip foundation tokens
+        'WETH': {'address': '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2', 'decimals': 18, 'coingecko_id': 'weth'},
+        'USDT': {'address': '0xdac17f958d2ee523a2206206994597c13d831ec7', 'decimals': 6, 'coingecko_id': 'tether'},
+        'USDC': {'address': '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', 'decimals': 6, 'coingecko_id': 'usd-coin'},
+        'WBTC': {'address': '0x2260fac5e5542a773aa44fbcfedf7c193bc2c599', 'decimals': 8, 'coingecko_id': 'wrapped-bitcoin'},
+        'UNI': {'address': '0x1f9840a85d5af5bf1d1762f925bdaddc4201f984', 'decimals': 18, 'coingecko_id': 'uniswap'},
+        'LINK': {'address': '0x514910771af9ca656af840dff83e8264ecf986ca', 'decimals': 18, 'coingecko_id': 'chainlink'},
+        'AAVE': {'address': '0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9', 'decimals': 18, 'coingecko_id': 'aave'},
+        
+        # DeFi protocol tokens (from Whale DeFi scanner)
+        'COMP': {'address': '0xc00e94Cb662C3520282E6f5717214004A7f26888', 'decimals': 18, 'coingecko_id': 'compound-governance-token'},
+        'MKR': {'address': '0x9f8F72aA9304c8B593d555F12eF6589cC3A579A2', 'decimals': 18, 'coingecko_id': 'maker'},
+        'SNX': {'address': '0xC011a73ee8576Fb46F5E1c5751cA3B9Fe0af2a6F', 'decimals': 18, 'coingecko_id': 'havven'},
+        'CRV': {'address': '0xD533a949740bb3306d119CC777fa900bA034cd52', 'decimals': 18, 'coingecko_id': 'curve-dao-token'},
+        'SUSHI': {'address': '0x6B3595068778DD592e39A122f4f5a5cF09C90fE2', 'decimals': 18, 'coingecko_id': 'sushi'},
+        'LDO': {'address': '0x5A98FcBEA516Cf06857215779Fd812CA3beF1B32', 'decimals': 18, 'coingecko_id': 'lido-dao'},
+        'FRAX': {'address': '0x853d955aCEf822Db058eb8505911ED77F175b99e', 'decimals': 18, 'coingecko_id': 'frax'},
+        'CVX': {'address': '0x4e3FBD56CD56c3e72c1403e103b45Db9da5B9D2B', 'decimals': 18, 'coingecko_id': 'convex-finance'},
+        
+        # Layer1 protocol tokens (from Whale Layer1 scanner)
+        'MATIC': {'address': '0x7D1AfA7B718fb893dB30A3aBc0Cfc608AaCfeBB0', 'decimals': 18, 'coingecko_id': 'matic-network'},
+        'AVAX': {'address': '0x85f138bfEE4ef8e540890CFb48F620571d67Eda3', 'decimals': 18, 'coingecko_id': 'avalanche-2'},
+        'ATOM': {'address': '0x8D983cb9388EaC77af0474fA441C4815500Cb7BB', 'decimals': 6, 'coingecko_id': 'cosmos'},
+        'NEAR': {'address': '0x85F17Cf997934a597031b2E18a9aB6ebD4B9f6a4', 'decimals': 24, 'coingecko_id': 'near'},
+        'FTM': {'address': '0x4E15361FD6b4BB609Fa63C81A2be19d873717870', 'decimals': 18, 'coingecko_id': 'fantom'},
+        'ALGO': {'address': '0x27702a26126e0B3702af63Ee09aC4d1A084EF628', 'decimals': 6, 'coingecko_id': 'algorand'},
+        'XTZ': {'address': '0x2e3D870790dC77A83DD1d18184Acc7439A53f475', 'decimals': 18, 'coingecko_id': 'tezos'},
+        'EOS': {'address': '0x86Fa049857E0209aa7D9e616F7eb3b3B78ECfdb0', 'decimals': 18, 'coingecko_id': 'eos'},
+        'THETA': {'address': '0x3883f5e181fccaF8410FA61e12b59BAd963fb645', 'decimals': 18, 'coingecko_id': 'theta-token'},
+        'ONE': {'address': '0xD5cd84D6f044AbE314Ee7E414d37cae8773ef9D3', 'decimals': 18, 'coingecko_id': 'harmony'},
+        
+        # Exchange tokens (from Whale Exchanges scanner)  
+        'BNB': {'address': '0xB8c77482e0A65C1D1d166A4D0eFE54F5F06c40C5', 'decimals': 18, 'coingecko_id': 'binancecoin'},
+        'CRO': {'address': '0xA0b73E1Ff0B80914AB6fe0444E65848C4C34450b', 'decimals': 8, 'coingecko_id': 'crypto-com-chain'},
+        'LEO': {'address': '0x2AF5D2aD76741191D15Dfe7bF6aC92d4Bd912Ca3', 'decimals': 18, 'coingecko_id': 'leo-token'},
+        'FTT': {'address': '0x50D1c9771902476076eCFc8B2A83Ad6b9355a4c9', 'decimals': 18, 'coingecko_id': 'ftx-token'},
+        'HT': {'address': '0x6f259637dcD74C767781E37Bc6133cd6A68aa161', 'decimals': 18, 'coingecko_id': 'huobi-token'},
+        'KCS': {'address': '0xf34960d9d60be18cC1D5Afc1A6F012A723a28811', 'decimals': 6, 'coingecko_id': 'kucoin-shares'},
+        'GT': {'address': '0xE66747a101bFF2dBA3697199DCcE5b743b454759', 'decimals': 18, 'coingecko_id': 'gatechain-token'},
+        'MX': {'address': '0x11eEf04c884E24d9B7B4760e7476D06ddF797f36', 'decimals': 18, 'coingecko_id': 'mexc-token'},
+        'OKB': {'address': '0x75231F58b43240C9718Dd58B4967c5114342a86c', 'decimals': 18, 'coingecko_id': 'okb'},
+        'NEXO': {'address': '0xB62132e35a6c13ee1EE0f84dC5d40bad8d815206', 'decimals': 18, 'coingecko_id': 'nexo'},
+        
+        # Retail/meme tokens (from Whale Retail scanner)
+        'SHIB': {'address': '0x95aD61b0a150d79219dCF64E1E6Cc01f0B64C4cE', 'decimals': 18, 'coingecko_id': 'shiba-inu'},
+        'PEPE': {'address': '0x6982508145454Ce325dDbE47a25d4ec3d2311933', 'decimals': 18, 'coingecko_id': 'pepe'},
+        'FLOKI': {'address': '0xcf0C122c6b73ff809C693DB761e7BaeBdF2A2089', 'decimals': 9, 'coingecko_id': 'floki'},
+        'APE': {'address': '0x4d224452801ACEd8B2F0aebE155379bb5D594381', 'decimals': 18, 'coingecko_id': 'apecoin'},
+        'LUNC': {'address': '0xd2877702675e6cE604938B093525e9100cAf9f3c', 'decimals': 18, 'coingecko_id': 'terra-luna'},
+    }
+    
+    return ethereum_contracts.get(symbol.upper())
+
+# High-value whale intelligence: Known Ethereum tokens (dynamic loading in scanner)
 TOP_TOKENS = {
     'USDC': {'address': '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', 'decimals': 6, 'coingecko_id': 'usd-coin'},
     'USDT': {'address': '0xdac17f958d2ee523a2206206994597c13d831ec7', 'decimals': 6, 'coingecko_id': 'tether'},
@@ -230,6 +320,21 @@ class WhaleScanner:
         self.etherscan = EtherscanAPI(ETHERSCAN_API_KEY)
         self.coingecko = CoinGeckoProAPI(COINGECKO_API_KEY)
         self.db_connection = None
+        self.tokens_to_scan = self.load_tokens_for_scanning()
+
+    def load_tokens_for_scanning(self):
+        """Load tokens dynamically from Kraken API with fallback"""
+        try:
+            dynamic_tokens = fetch_kraken_tradeable_symbols()
+            if dynamic_tokens and len(dynamic_tokens) > 0:
+                logger.info(f"✅ Loaded {len(dynamic_tokens)} dynamic tokens from Kraken")
+                return dynamic_tokens
+            else:
+                logger.warning("⚠️ Using fallback token list")
+                return TOP_TOKENS
+        except Exception as e:
+            logger.error(f"❌ Failed to load dynamic tokens: {e}")
+            return TOP_TOKENS
     
     def connect_database(self):
         """Connect to database with autocommit disabled"""
@@ -473,7 +578,7 @@ class WhaleScanner:
             logger.info(f"📊 Scanning blocks {start_block:,} to {latest_block:,}")
             
             # Get token prices
-            coingecko_ids = [info['coingecko_id'] for info in TOP_TOKENS.values()]
+            coingecko_ids = [info['coingecko_id'] for info in self.tokens_to_scan.values()]
             prices = self.coingecko.get_multiple_prices(coingecko_ids)
             
             if not prices:
@@ -484,7 +589,7 @@ class WhaleScanner:
             total_whales = 0
             total_volume = 0.0
             
-            for symbol, token_info in TOP_TOKENS.items():
+            for symbol, token_info in self.tokens_to_scan.items():
                 try:
                     price = prices.get(token_info['coingecko_id'], 0)
                     
@@ -518,7 +623,7 @@ class WhaleScanner:
             logger.info(f"  🐋 Total whales found: {total_whales}")
             logger.info(f"  💰 Total volume: ${total_volume:,.2f}")
             logger.info(f"  ⏰ Duration: {duration:.1f} minutes")
-            logger.info(f"  📊 Tokens scanned: {len(TOP_TOKENS)}")
+            logger.info(f"  📊 Tokens scanned: {len(self.tokens_to_scan)}")
             sys.stdout.flush()
             
             return True
