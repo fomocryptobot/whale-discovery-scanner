@@ -368,15 +368,36 @@ class KrakenAssetAPI:
         if not assets:
             return None
         
+        # DEBUG: Log first few assets to see structure
+        if len(assets) > 0 and not hasattr(self, '_debug_logged'):
+            first_asset = list(assets.items())[0]
+            logger.info(f"🔍 DEBUG: Sample Kraken asset structure: {first_asset}")
+            self._debug_logged = True
+        
         # Look for the symbol in Kraken assets
         for asset_id, asset_info in assets.items():
             asset_symbol = asset_info.get('altname', '').upper()
             
-            # Match symbol
+            # DEBUG: Log matches for debugging
             if asset_symbol == symbol.upper():
-                # Check if it's an Ethereum token
-                if 'ethereum' in asset_info.get('blockchain', '').lower():
-                    contract_address = asset_info.get('contract_address')
+                logger.info(f"🔍 DEBUG: Found asset {symbol}: {asset_info}")
+                
+                # Check if it's an Ethereum token - try multiple field names
+                blockchain = asset_info.get('blockchain', '').lower()
+                network = asset_info.get('network', '').lower() 
+                chain = asset_info.get('chain', '').lower()
+                
+                logger.info(f"🔍 DEBUG: {symbol} blockchain fields - blockchain: {blockchain}, network: {network}, chain: {chain}")
+                
+                if any('ethereum' in field or 'eth' in field for field in [blockchain, network, chain]):
+                    # Try multiple field names for contract address
+                    contract_address = (asset_info.get('contract_address') or 
+                                      asset_info.get('contract') or 
+                                      asset_info.get('address') or 
+                                      asset_info.get('eth_address'))
+                    
+                    logger.info(f"🔍 DEBUG: {symbol} contract address: {contract_address}")
+                    
                     if contract_address and contract_address.startswith('0x'):
                         
                         contract_data = {
@@ -388,6 +409,8 @@ class KrakenAssetAPI:
                         self._contract_cache[symbol] = contract_data
                         logger.info(f"✅ Found Kraken contract for {symbol}: {contract_address}")
                         return contract_data
+                else:
+                    logger.info(f"❌ {symbol} not identified as Ethereum token")
         
         # Cache negative result to avoid repeated lookups
         self._contract_cache[symbol] = None
