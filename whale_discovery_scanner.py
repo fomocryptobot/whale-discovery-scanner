@@ -454,35 +454,62 @@ class WhaleScanner:
         try:
             # Get tradeable symbols from Kraken scanner
             kraken_api_url = "https://kraken-scanner-webservice.onrender.com/tradeable/coins"
+            logger.info(f"🔗 Calling Kraken tradeable symbols API: {kraken_api_url}")
             response = requests.get(kraken_api_url, timeout=30)
             
             if response.status_code != 200:
-                logger.error("❌ Failed to get Kraken tradeable symbols")
+                logger.error(f"❌ Failed to get Kraken tradeable symbols: HTTP {response.status_code}")
                 return {}
             
             data = response.json()
             coins = data.get('coins', [])
             logger.info(f"✅ Fetched {len(coins)} tradeable symbols from Kraken")
             
+            # DEBUG: Show first few symbols
+            if len(coins) > 0:
+                sample_symbols = [coin.get('symbol', 'N/A') for coin in coins[:10]]
+                logger.info(f"🔍 DEBUG: Sample symbols: {sample_symbols}")
+            
             # Use Kraken Asset API to get contract addresses
             token_dict = {}
+            processed_count = 0
+            
             for coin in coins:
                 symbol = coin.get('symbol', '').upper()
                 if symbol:
+                    processed_count += 1
+                    logger.info(f"🔍 DEBUG: Processing symbol {processed_count}/{len(coins)}: {symbol}")
+                    
                     contract_info = self.kraken_assets.get_ethereum_contract(symbol)
                     if contract_info:
                         token_dict[symbol] = contract_info
+                        logger.info(f"✅ Added {symbol} to scanning list")
+                    else:
+                        logger.info(f"❌ No contract found for {symbol}")
+                
+                # Stop after processing 20 symbols for debugging
+                if processed_count >= 20:
+                    logger.info(f"🔍 DEBUG: Stopping after 20 symbols for debugging")
+                    break
             
             logger.info(f"📊 Mapped {len(token_dict)} Ethereum tokens via Kraken Asset API")
             
             if len(token_dict) == 0:
                 logger.error("❌ No Ethereum contracts found via Kraken API")
-                return {}
+                # FALLBACK: Use a few known tokens for testing
+                logger.info("🔄 Using fallback tokens for debugging")
+                return {
+                    'USDC': {'address': '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', 'decimals': 6, 'coingecko_id': 'usd-coin'},
+                    'USDT': {'address': '0xdac17f958d2ee523a2206206994597c13d831ec7', 'decimals': 6, 'coingecko_id': 'tether'},
+                    'WETH': {'address': '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2', 'decimals': 18, 'coingecko_id': 'weth'}
+                }
             
             return token_dict
             
         except Exception as e:
             logger.error(f"❌ Failed to load tokens via Kraken Asset API: {e}")
+            import traceback
+            logger.error(f"❌ Traceback: {traceback.format_exc()}")
             return {}
     
     def connect_database(self):
