@@ -575,7 +575,7 @@ class WhaleScanner:
             blocks_back = int(blocks_per_hour * (5/60))  # 5-minute window = 25 blocks
             start_block = max(0, latest_block - blocks_back)
             
-            logger.info(f"📊 Scanning blocks {start_block:,} to {latest_block:,}")
+            logger.info(f"📊 Scanning blocks {start_block:,} to {latest_block:,} ({blocks_back} blocks = 5 minutes)")
             
             # Get token prices
             coingecko_ids = [info['coingecko_id'] for info in self.tokens_to_scan.values()]
