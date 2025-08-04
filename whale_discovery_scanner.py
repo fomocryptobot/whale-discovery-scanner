@@ -93,7 +93,7 @@ def fetch_kraken_tradeable_symbols():
             token_dict = {}
             for coin in coins:
                 symbol = coin.get('symbol', '').upper()
-                if symbol and coin.get('tradeable', False):
+                if symbol:
                     # Try to get contract info for any symbol - no hardcoded filter
                     contract_info = get_ethereum_contract_info(symbol)
                     if contract_info:
@@ -323,18 +323,18 @@ class WhaleScanner:
         self.tokens_to_scan = self.load_tokens_for_scanning()
 
     def load_tokens_for_scanning(self):
-        """Load tokens dynamically from Kraken API with fallback"""
+        """Load tokens dynamically from Kraken API - NO FALLBACK"""
         try:
             dynamic_tokens = fetch_kraken_tradeable_symbols()
             if dynamic_tokens and len(dynamic_tokens) > 0:
                 logger.info(f"✅ Loaded {len(dynamic_tokens)} dynamic tokens from Kraken")
                 return dynamic_tokens
             else:
-                logger.warning("⚠️ Using fallback token list")
-                return TOP_TOKENS
+                logger.error("❌ No tokens received from Kraken API - ABORTING")
+                return {}
         except Exception as e:
-            logger.error(f"❌ Failed to load dynamic tokens: {e}")
-            return TOP_TOKENS
+            logger.error(f"❌ Failed to load dynamic tokens: {e} - ABORTING")
+            return {}
     
     def connect_database(self):
         """Connect to database with autocommit disabled"""
