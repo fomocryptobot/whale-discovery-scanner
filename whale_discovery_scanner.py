@@ -570,9 +570,9 @@ class WhaleScanner:
                 logger.error("❌ Cannot determine latest block - exiting")
                 return False
             
-            # Calculate 6-hour scan range
+            # Calculate 5-minute scan range (sequential scanning optimized)
             blocks_per_hour = 300  # ~12 seconds per block
-            blocks_back = blocks_per_hour * 6
+            blocks_back = int(blocks_per_hour * (5/60))  # 5-minute window = 25 blocks
             start_block = max(0, latest_block - blocks_back)
             
             logger.info(f"📊 Scanning blocks {start_block:,} to {latest_block:,}")
