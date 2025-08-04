@@ -16,6 +16,7 @@ print("🔧 STARTUP: Unbuffered mode set", flush=True)
 import requests
 import time
 import json
+import urllib.parse
 from datetime import datetime, timedelta
 import logging
 
@@ -318,6 +319,154 @@ class CoinGeckoProAPI:
         except Exception as e:
             logger.error(f"Price lookup failed: {e}")
             return {}
+
+class KrakenAssetAPI:
+    """Kraken Asset API for contract address lookups"""
+    
+    def __init__(self, api_key, private_key):
+        self.api_key = api_key
+        self.private_key = private_key
+        self.base_url = "https://api.kraken.com"
+        self.session = requests.Session()
+        self._asset_cache = {}
+        self._contract_cache = {}
+    
+    def get_nonce(self):
+        """Generate nonce for authenticated requests"""
+        return str(int(time.time() * 1000))
+    
+    def get_kraken_signature(self, url_path, data):
+        """Generate Kraken API signature"""
+        import hashlib
+        import hmac
+        import base64
+        
+        postdata = urllib.parse.urlencode(data)
+        encoded = (str(data['nonce']) + postdata).encode()
+        message = url_path.encode() + hashlib.sha256(encoded).digest()
+        
+        mac = hmac.new(base64.b64decode(self.private_key), message, hashlib.sha512)
+        return base64.b64encode(mac.digest()).decode()
+    
+    def kraken_request(self, url_path, data=None):
+        """Make authenticated Kraken API request"""
+        if data is None:
+            data = {}
+        
+        data['nonce'] = self.get_nonce()
+        
+        headers = {
+            'API-Key': self.api_key,
+            'API-Sign': self.get_kraken_signature(url_path, data)
+        }
+        
+        try:
+            response = self.session.post(
+                self.base_url + url_path, 
+                headers=headers, 
+                data=data,
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                if result.get('error'):
+                    logger.error(f"❌ Kraken API error: {result['error']}")
+                    return None
+                return result.get('result', {})
+            else:
+                logger.error(f"❌ Kraken HTTP error: {response.status_code}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"❌ Kraken request failed: {e}")
+            return None
+    
+    def get_asset_info(self):
+        """Get all Kraken asset information"""
+        if self._asset_cache:
+            return self._asset_cache
+        
+        try:
+            # Try public endpoint first (no auth needed)
+            response = self.session.get(f"{self.base_url}/0/public/Assets", timeout=30)
+            
+            if response.status_code == 200:
+                data = response.json()
+                if not data.get('error'):
+                    self._asset_cache = data.get('result', {})
+                    logger.info(f"✅ Loaded {len(self._asset_cache)} Kraken assets")
+                    return self._asset_cache
+            
+            # Fallback to authenticated endpoint if needed
+            result = self.kraken_request('/0/private/AssetInfo')
+            if result:
+                self._asset_cache = result
+                logger.info(f"✅ Loaded {len(self._asset_cache)} Kraken assets (authenticated)")
+                return self._asset_cache
+            
+            return {}
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to get Kraken asset info: {e}")
+            return {}
+    
+    def get_ethereum_contract(self, symbol):
+        """Get Ethereum contract address for Kraken symbol"""
+        if symbol in self._contract_cache:
+            return self._contract_cache[symbol]
+        
+        assets = self.get_asset_info()
+        if not assets:
+            return None
+        
+        # Look for the symbol in Kraken assets
+        for asset_id, asset_info in assets.items():
+            asset_symbol = asset_info.get('altname', '').upper()
+            
+            # Match symbol
+            if asset_symbol == symbol.upper():
+                # Check if it's an Ethereum token
+                if 'ethereum' in asset_info.get('blockchain', '').lower():
+                    contract_address = asset_info.get('contract_address')
+                    if contract_address and contract_address.startswith('0x'):
+                        
+                        contract_data = {
+                            'address': contract_address.lower(),
+                            'decimals': int(asset_info.get('decimals', 18)),
+                            'coingecko_id': self._get_coingecko_id(symbol)
+                        }
+                        
+                        self._contract_cache[symbol] = contract_data
+                        logger.info(f"✅ Found Kraken contract for {symbol}: {contract_address}")
+                        return contract_data
+        
+        # Cache negative result to avoid repeated lookups
+        self._contract_cache[symbol] = None
+        return None
+    
+    def _get_coingecko_id(self, symbol):
+        """Map Kraken symbol to CoinGecko ID - basic mapping"""
+        # Basic symbol to coingecko_id mapping
+        symbol_map = {
+            'WETH': 'weth',
+            'USDT': 'tether', 
+            'USDC': 'usd-coin',
+            'WBTC': 'wrapped-bitcoin',
+            'UNI': 'uniswap',
+            'LINK': 'chainlink',
+            'AAVE': 'aave',
+            'COMP': 'compound-governance-token',
+            'MKR': 'maker',
+            'SNX': 'havven',
+            'CRV': 'curve-dao-token',
+            'SUSHI': 'sushi',
+            'LDO': 'lido-dao',
+            'MATIC': 'matic-network',
+            'AVAX': 'avalanche-2'
+        }
+        
+        return symbol_map.get(symbol.upper(), symbol.lower())
 
 class WhaleScanner:
     """Main whale scanner optimized for cron execution"""
