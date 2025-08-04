@@ -38,6 +38,8 @@ print("🔥 CACHE BUST v6.0 LOADING...", flush=True)
 DB_URL = os.getenv('TRINITY_DATABASE_URL')
 ETHERSCAN_API_KEY = os.getenv('ETHERSCAN_API_KEY')
 COINGECKO_API_KEY = os.getenv('COINGECKO_API_KEY')
+KRAKEN_API_KEY = os.getenv('KRAKEN_API_KEY')
+KRAKEN_PRIVATE_KEY = os.getenv('KRAKEN_PRIVATE_KEY')
 
 print("🔧 STARTUP: Environment variables loaded", flush=True)
 
@@ -48,6 +50,10 @@ if not ETHERSCAN_API_KEY:
     raise ValueError("❌ ETHERSCAN_API_KEY environment variable is required") 
 if not COINGECKO_API_KEY:
     raise ValueError("❌ COINGECKO_API_KEY environment variable is required")
+if not KRAKEN_API_KEY:
+    raise ValueError("❌ KRAKEN_API_KEY environment variable is required")
+if not KRAKEN_PRIVATE_KEY:
+    raise ValueError("❌ KRAKEN_PRIVATE_KEY environment variable is required")
 
 print("🔧 STARTUP: Environment variables validated", flush=True)
 
