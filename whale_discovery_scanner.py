@@ -95,30 +95,61 @@ logger.info(f"🚀 {SCANNER_NAME} DEPLOYMENT STARTING")
 logger.info(f"⏰ Execution time: {datetime.utcnow()}")
 
 def fetch_kraken_tradeable_symbols():
-    """Fetch all tradeable symbols from Kraken Universe Scanner API"""
+    """Fetch ALL tradeable symbols directly from Kraken's official API"""
     try:
-        kraken_api_url = "https://kraken-scanner-webservice.onrender.com/tradeable/coins?limit=1000"
+        # DIRECT KRAKEN API - No custom middleman, no pagination limits
+        kraken_api_url = "https://api.kraken.com/0/public/AssetPairs"
+        logger.info(f"🔗 Using DIRECT Kraken API: {kraken_api_url}")
+        
         response = requests.get(kraken_api_url, timeout=30)
         
         if response.status_code == 200:
             data = response.json()
-            coins = data.get('coins', [])
             
-            logger.info(f"✅ Fetched {len(coins)} tradeable symbols from Kraken API")
+            # Check for Kraken API errors
+            if data.get('error') and len(data['error']) > 0:
+                raise Exception(f"Kraken API error: {data['error']}")
             
-            # Convert to format expected by scanner with DYNAMIC contract lookup
+            # Extract all trading pairs from Kraken's response
+            asset_pairs = data.get('result', {})
+            logger.info(f"✅ Fetched {len(asset_pairs)} trading pairs directly from Kraken")
+            
+            # Convert Kraken pairs to our scanner format with DYNAMIC contract lookup
             token_dict = {}
             processed_count = 0
             success_count = 0
             
-            for coin in coins:
-                symbol = coin.get('symbol', '').upper()
-                if symbol:
+            for kraken_pair_id, pair_info in asset_pairs.items():
+                try:
+                    # Skip offline pairs
+                    if pair_info.get('status') != 'online':
+                        continue
+                    
+                    # Extract base symbol from Kraken pair data
+                    base_asset = pair_info.get('base', '')
+                    altname = pair_info.get('altname', '')
+                    
+                    # Use altname if available (cleaner symbol), otherwise extract from base
+                    if altname:
+                        # Extract base symbol from altname (e.g., "BTCUSD" -> "BTC")
+                        symbol = extract_base_symbol_from_altname(altname)
+                    else:
+                        # Clean up Kraken asset ID (remove X/Z prefixes)
+                        symbol = clean_kraken_asset_id(base_asset)
+                    
+                    if not symbol:
+                        continue
+                        
+                    symbol = symbol.upper()
                     processed_count += 1
                     
                     # Progress logging every 50 tokens
                     if processed_count % 50 == 0:
-                        logger.info(f"🔍 Progress: {processed_count}/{len(coins)} symbols processed, {success_count} contracts found")
+                        logger.info(f"🔍 Progress: {processed_count}/{len(asset_pairs)} pairs processed, {success_count} contracts found")
+                    
+                    # Skip if we already have this symbol (prefer USD pairs)
+                    if symbol in token_dict:
+                        continue
                     
                     # DYNAMIC contract lookup - NO hardcoded data
                     contract_info = get_ethereum_contract_info_dynamic(symbol)
@@ -126,9 +157,13 @@ def fetch_kraken_tradeable_symbols():
                         token_dict[symbol] = contract_info
                         success_count += 1
                         logger.debug(f"✅ Added {symbol}: {contract_info['address']}")
+                        
+                except Exception as e:
+                    logger.debug(f"❌ Error processing pair {kraken_pair_id}: {e}")
+                    continue
             
-            logger.info(f"🎉 DYNAMIC LOOKUP COMPLETE!")
-            logger.info(f"📊 Processed: {processed_count} symbols")
+            logger.info(f"🎉 DIRECT KRAKEN API LOOKUP COMPLETE!")
+            logger.info(f"📊 Processed: {processed_count} trading pairs")
             logger.info(f"✅ Found contracts: {success_count} tokens")
             logger.info(f"📈 Success rate: {(success_count/processed_count)*100:.1f}%")
             
@@ -139,12 +174,57 @@ def fetch_kraken_tradeable_symbols():
             return token_dict
             
         else:
-            logger.error(f"❌ Kraken API error: HTTP {response.status_code}")
-            raise Exception(f"Kraken API returned {response.status_code}")
+            logger.error(f"❌ Direct Kraken API error: HTTP {response.status_code}")
+            raise Exception(f"Direct Kraken API returned {response.status_code}")
             
     except Exception as e:
-        logger.error(f"❌ Failed to fetch Kraken symbols: {e}")
-        raise Exception(f"Critical failure: Cannot load token universe - {e}")
+        logger.error(f"❌ Failed to fetch from direct Kraken API: {e}")
+        raise Exception(f"Critical failure: Cannot load token universe from direct Kraken API - {e}")
+
+def extract_base_symbol_from_altname(altname):
+    """Extract base symbol from Kraken altname (e.g., 'BTCUSD' -> 'BTC')"""
+    try:
+        # Common quote currencies in order of preference
+        quote_currencies = ['USD', 'USDT', 'USDC', 'EUR', 'GBP', 'BTC', 'ETH', 'XBT']
+        
+        altname = altname.upper()
+        
+        # Try to find a quote currency at the end
+        for quote in quote_currencies:
+            if altname.endswith(quote):
+                base = altname[:-len(quote)]
+                if len(base) >= 2:  # Valid base symbol
+                    return base
+        
+        # If no standard quote found, assume first 3-4 chars are base
+        if len(altname) >= 6:
+            return altname[:3]  # Most common case
+        
+        return None
+        
+    except Exception as e:
+        logger.debug(f"Error extracting base from altname {altname}: {e}")
+        return None
+
+def clean_kraken_asset_id(asset_id):
+    """Clean Kraken asset ID by removing X/Z prefixes"""
+    try:
+        if not asset_id:
+            return None
+            
+        asset_id = asset_id.upper()
+        
+        # Remove Kraken prefixes (X for crypto, Z for fiat)
+        if asset_id.startswith('X') and len(asset_id) > 3:
+            return asset_id[1:]  # Remove X prefix
+        elif asset_id.startswith('Z') and len(asset_id) > 3:
+            return asset_id[1:]  # Remove Z prefix
+        else:
+            return asset_id  # No prefix to remove
+            
+    except Exception as e:
+        logger.debug(f"Error cleaning asset ID {asset_id}: {e}")
+        return None
 
 def get_ethereum_contract_info_dynamic(symbol):
     """
