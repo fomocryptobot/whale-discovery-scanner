@@ -557,7 +557,7 @@ class MasterWhaleScanner:
             
             # Get recent Bitcoin blocks for scanning
             whale_transactions = []
-            blocks_to_scan = 150  # ~25 hours of Bitcoin blocks for maximum whale coverage
+            blocks_to_scan = 25  # ~4 hours of Bitcoin blocks (sustainable for free tier)
             
             # Get latest Bitcoin block from BlockCypher
             try:
@@ -691,109 +691,118 @@ class MasterWhaleScanner:
         try:
             logger.info(f"🔍 {self.scanner_name} scanning Solana whales for {symbol} (${token_price:,.2f})...")
             
-            # Get recent Solana transactions for large accounts
-            whale_transactions = []
-            transactions_to_scan = 100  # Recent high-value transactions
-            
-            # Solana approach: Get recent transactions from network (different from Bitcoin blocks)
-            try:
-                # Get recent transactions from Solscan
-                url = f"{self.solscan.base_url}/token/transfer"
-                params = {
-                    'limit': transactions_to_scan,
-                    'sort_by': 'time',
-                    'sort_type': 'desc'
-                }
-                
-                time.sleep(self.solscan.delay)  # Rate limiting
-                response = self.solscan.session.get(url, params=params, timeout=30)
-                
-                if response.status_code != 200:
-                    logger.warning(f"{self.scanner_name} Solscan API failed: HTTP {response.status_code}")
-                    return []
-                    
-                data = response.json()
-                transactions = data.get('data', [])
-                
-                if not transactions:
-                    logger.info(f"  ⚪ {self.scanner_name} no recent Solana transactions found")
-                    return []
-                
-                logger.info(f"  📊 Processing {len(transactions)} recent Solana transactions")
-                
-                # Track unique transactions to prevent duplicates
-                seen_transactions = set()
-                
-                # Process transactions for whale detection
-                for tx in transactions:
-                    try:
-                        tx_signature = tx.get('trans_id') or tx.get('signature')
-                        if not tx_signature or tx_signature in seen_transactions:
-                            continue
-                            
-                        seen_transactions.add(tx_signature)
-                        
-                        # Get transaction amount (SOL is native, 9 decimals)
-                        amount_raw = tx.get('amount', 0)
-                        if not amount_raw:
-                            continue
-                            
-                        # Convert to SOL (Solana uses 9 decimals)
-                        sol_amount = float(amount_raw) / 1_000_000_000  # 1 SOL = 1B lamports
-                        usd_amount = sol_amount * token_price
-                        
-                        # Check whale threshold ($500 minimum)
-                        if usd_amount < WHALE_THRESHOLD_USD or usd_amount > MAX_USD_AMOUNT:
-                            continue
-                        
-                        # Get transaction addresses
-                        from_addr = tx.get('source') or tx.get('from_address')
-                        to_addr = tx.get('destination') or tx.get('to_address')
-                        
-                        if not to_addr:  # Need at least destination address
-                            continue
-                        
-                        # Get transaction timestamp
-                        tx_time = tx.get('block_time', 0)
-                        if tx_time:
-                            block_timestamp = datetime.fromtimestamp(tx_time)
-                        else:
-                            block_timestamp = datetime.utcnow()
-                        
-                        # Create Solana whale transaction record
-                        whale_tx = {
-                            'transaction_id': tx_signature,
-                            'wallet_address': to_addr,  # Receiver is the whale
-                            'blockchain': 'sol',
-                            'block_number': tx.get('slot', None),  # Solana uses slots instead of blocks
-                            'block_timestamp': block_timestamp,
-                            'transaction_index': None,  # Solana doesn't use transaction index
-                            'from_address': from_addr,
-                            'to_address': to_addr,
-                            'gas_used': None,  # Solana doesn't use gas
-                            'gas_price': None,  # Solana doesn't use gas
-                            'transaction_fee_usd': None,  # Calculate if needed later
-                            'coin_symbol': symbol,
-                            'coin_contract': None,  # Solana SOL is native, no contract
-                            'coin_decimals': 9,  # Solana has 9 decimal places
-                            'activity_type': 'transfer',
-                            'amount_tokens': sol_amount,
-                            'amount_usd': round(usd_amount, 2),
-                            'price_per_token': token_price,
-                            'raw_transaction': json.dumps(tx),  # Store full transaction data
-                            'data_source': SCANNER_VERSION,
-                            'processed_at': datetime.utcnow()
-                        }
-                        
-                        whale_transactions.append(whale_tx)
-                        
-                    except Exception as e:
-                        logger.debug(f"{self.scanner_name} error processing Solana tx: {e}")
-                        continue
-                
-            except Exception as e:
-                logger.error(f"{self.scanner_name} Solscan API request failed: {e}")
+            # Get whale addresses from environment variable
+            whale_addresses_env = os.getenv('SOLANA_WHALE_ADDRESSES', '')
+            if not whale_addresses_env:
+                logger.warning(f"{self.scanner_name} no SOLANA_WHALE_ADDRESSES configured")
                 return []
+            
+            whale_addresses = [addr.strip() for addr in whale_addresses_env.split(',') if addr.strip()]
+            if not whale_addresses:
+                logger.warning(f"{self.scanner_name} invalid SOLANA_WHALE_ADDRESSES format")
+                return []
+            
+            logger.info(f"  📊 Scanning {len(whale_addresses)} Solana whale addresses")
+            
+            # Initialize variables
+            whale_transactions = []
+            seen_transactions = set()
+            url = f"{self.solscan.base_url}/account/transactions"
+            
+            # Process each whale address
+            for address in whale_addresses:
+                try:
+                    params = {
+                        'account': address,
+                        'limit': 25  # Reduced per address for rate limiting
+                    }
+                    
+                    time.sleep(self.solscan.delay)  # Rate limiting
+                    response = self.solscan.session.get(url, params=params, timeout=30)
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        transactions = data.get('data', [])
+                        
+                        logger.info(f"    📊 Address {address[:8]}... returned {len(transactions)} transactions")
+                        
+                        # Process transactions for whale detection from this address
+                        for tx in transactions:
+                            try:
+                                tx_signature = tx.get('trans_id') or tx.get('signature')
+                                if not tx_signature or tx_signature in seen_transactions:
+                                    continue
+                                    
+                                seen_transactions.add(tx_signature)
+                                
+                                # Get transaction amount (SOL is native, 9 decimals)
+                                amount_raw = tx.get('amount', 0)
+                                if not amount_raw:
+                                    continue
+                                    
+                                # Convert to SOL (Solana uses 9 decimals)
+                                sol_amount = float(amount_raw) / 1_000_000_000  # 1 SOL = 1B lamports
+                                usd_amount = sol_amount * token_price
+                                
+                                # Check whale threshold ($500 minimum)
+                                if usd_amount < WHALE_THRESHOLD_USD or usd_amount > MAX_USD_AMOUNT:
+                                    continue
+                                
+                                # Get transaction addresses
+                                from_addr = tx.get('source') or tx.get('from_address')
+                                to_addr = tx.get('destination') or tx.get('to_address')
+                                
+                                if not to_addr:  # Need at least destination address
+                                    continue
+                                
+                                # Get transaction timestamp
+                                tx_time = tx.get('block_time', 0)
+                                if tx_time:
+                                    block_timestamp = datetime.fromtimestamp(tx_time)
+                                else:
+                                    block_timestamp = datetime.utcnow()
+                                
+                                # Create Solana whale transaction record
+                                whale_tx = {
+                                    'transaction_id': tx_signature,
+                                    'wallet_address': to_addr,
+                                    'blockchain': 'sol',
+                                    'block_number': tx.get('slot', None),
+                                    'block_timestamp': block_timestamp,
+                                    'transaction_index': None,
+                                    'from_address': from_addr,
+                                    'to_address': to_addr,
+                                    'gas_used': None,
+                                    'gas_price': None,
+                                    'transaction_fee_usd': None,
+                                    'coin_symbol': symbol,
+                                    'coin_contract': None,
+                                    'coin_decimals': 9,
+                                    'activity_type': 'transfer',
+                                    'amount_tokens': sol_amount,
+                                    'amount_usd': round(usd_amount, 2),
+                                    'price_per_token': token_price,
+                                    'raw_transaction': json.dumps(tx),
+                                    'data_source': SCANNER_VERSION,
+                                    'processed_at': datetime.utcnow()
+                                }
+                                
+                                whale_transactions.append(whale_tx)
+                                
+                            except Exception as e:
+                                logger.debug(f"{self.scanner_name} error processing Solana tx: {e}")
+                                continue
+                        
+                    elif response.status_code == 401:
+                        logger.warning(f"{self.scanner_name} Solscan authentication failed for {address[:8]}...")
+                        continue
+                    else:
+                        logger.debug(f"{self.scanner_name} Solscan HTTP {response.status_code} for {address[:8]}...")
+                        continue
+                        
+                except Exception as e:
+                    logger.debug(f"{self.scanner_name} Solana address {address[:8]}... failed: {e}")
+                    continue
             
             if whale_transactions:
                 logger.info(f"  🐋 {self.scanner_name} found {len(whale_transactions)} Solana whales")
