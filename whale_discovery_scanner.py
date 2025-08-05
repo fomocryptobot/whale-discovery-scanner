@@ -330,8 +330,21 @@ class MasterWhaleScanner:
                 contracts = data.get('contracts', {})
                 
                 if contracts and len(contracts) >= 50:
+                    # Add native blockchain tokens manually (they have no contracts)
+                    contracts['BTC'] = {
+                        'coingecko_id': 'bitcoin',
+                        'decimals': 8,
+                        'address': None  # Native Bitcoin has no contract
+                    }
+                    contracts['SOL'] = {
+                        'coingecko_id': 'solana',
+                        'decimals': 9,
+                        'address': None  # Native Solana has no contract  
+                    }
+                    
                     logger.info(f"✅ {self.scanner_name} loaded {len(contracts)} tokens from database")
                     logger.info(f"🚀 {self.scanner_name} eliminated 1000+ API calls - using database only!")
+                    logger.info(f"💰 {self.scanner_name} added native BTC and SOL for multi-blockchain scanning")
                     return contracts
                 else:
                     raise Exception(f"❌ ERROR: Insufficient contracts in database: {len(contracts)}. Need minimum 50 contracts.")
