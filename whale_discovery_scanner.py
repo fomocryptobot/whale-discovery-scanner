@@ -538,16 +538,136 @@ class MasterWhaleScanner:
         return saved_count
     
     def scan_bitcoin_whales(self, symbol, token_price):
-        """Scan Bitcoin whale transactions"""
+        """Scan native Bitcoin blockchain for whale transactions"""
         try:
-            # For Bitcoin, we scan recent transactions from known whale addresses
-            # This is a simplified approach - Bitcoin whale addresses would come from database
-            logger.info(f"🔍 {self.scanner_name} scanning Bitcoin whales for {symbol}...")
+            logger.info(f"🔍 {self.scanner_name} scanning Bitcoin whales for {symbol} (${token_price:,.2f})...")
             
-            # Bitcoin whale detection would require different logic
-            # For now, return empty list - Bitcoin integration needs whale address database
-            logger.info(f"  ⚪ {self.scanner_name} Bitcoin whale scanning not yet implemented")
-            return []
+            # Get recent Bitcoin blocks for scanning
+            whale_transactions = []
+            blocks_to_scan = 12  # ~2 hours of Bitcoin blocks
+            
+            # Get latest Bitcoin block from BlockCypher
+            try:
+                url = f"{self.blockcypher.base_url}?token={self.blockcypher.api_key}"
+                response = self.blockcypher.session.get(url, timeout=30)
+                
+                if response.status_code == 200:
+                    chain_data = response.json()
+                    latest_block = chain_data.get('height', 0)
+                else:
+                    logger.warning(f"{self.scanner_name} Bitcoin chain info failed: HTTP {response.status_code}")
+                    return []
+                    
+            except Exception as e:
+                logger.error(f"{self.scanner_name} Bitcoin chain lookup failed: {e}")
+                return []
+            
+            # Scan recent blocks for whale transactions
+            start_block = max(0, latest_block - blocks_to_scan)
+            logger.info(f"  📊 Scanning Bitcoin blocks {start_block:,} to {latest_block:,}")
+            
+            # Track unique transactions to prevent duplicates
+            seen_transactions = set()
+            
+            for block_height in range(start_block, latest_block + 1):
+                try:
+                    # Get block data from BlockCypher
+                    block_url = f"{self.blockcypher.base_url}/blocks/{block_height}"
+                    params = {'token': self.blockcypher.api_key, 'limit': 500}
+                    
+                    time.sleep(self.blockcypher.delay)  # Rate limiting
+                    response = self.blockcypher.session.get(block_url, params=params, timeout=30)
+                    
+                    if response.status_code != 200:
+                        logger.debug(f"{self.scanner_name} Bitcoin block {block_height} failed: HTTP {response.status_code}")
+                        continue
+                        
+                    block_data = response.json()
+                    transactions = block_data.get('txs', [])
+                    
+                    # Process transactions in this block
+                    for tx in transactions:
+                        try:
+                            tx_hash = tx.get('hash')
+                            if not tx_hash or tx_hash in seen_transactions:
+                                continue
+                                
+                            seen_transactions.add(tx_hash)
+                            
+                            # Calculate total transaction value
+                            total_value_satoshi = tx.get('total', 0)
+                            if total_value_satoshi <= 0:
+                                continue
+                                
+                            # Convert satoshi to BTC
+                            btc_amount = total_value_satoshi / 100_000_000  # 1 BTC = 100M satoshi
+                            usd_amount = btc_amount * token_price
+                            
+                            # Check whale threshold ($500 minimum)
+                            if usd_amount < WHALE_THRESHOLD_USD or usd_amount > MAX_USD_AMOUNT:
+                                continue
+                            
+                            # Get primary addresses (largest input/output)
+                            inputs = tx.get('inputs', [])
+                            outputs = tx.get('outputs', [])
+                            
+                            from_addr = None
+                            to_addr = None
+                            
+                            if inputs and len(inputs) > 0:
+                                # Get address from largest input
+                                largest_input = max(inputs, key=lambda x: x.get('output_value', 0))
+                                from_addr = largest_input.get('addresses', [None])[0] if largest_input.get('addresses') else None
+                            
+                            if outputs and len(outputs) > 0:
+                                # Get address from largest output  
+                                largest_output = max(outputs, key=lambda x: x.get('value', 0))
+                                to_addr = largest_output.get('addresses', [None])[0] if largest_output.get('addresses') else None
+                            
+                            if not to_addr:  # Need at least destination address
+                                continue
+                            
+                            # Create Bitcoin whale transaction record
+                            whale_tx = {
+                                'transaction_id': tx_hash,
+                                'wallet_address': to_addr,  # Receiver is the whale
+                                'blockchain': 'btc',
+                                'block_number': block_height,
+                                'block_timestamp': datetime.fromisoformat(tx.get('confirmed').replace('Z', '+00:00')) if tx.get('confirmed') else datetime.utcnow(),
+                                'transaction_index': None,  # Bitcoin doesn't use transaction index like Ethereum
+                                'from_address': from_addr,
+                                'to_address': to_addr,
+                                'gas_used': None,  # Bitcoin doesn't use gas
+                                'gas_price': None,  # Bitcoin doesn't use gas
+                                'transaction_fee_usd': None,  # Calculate if needed later
+                                'coin_symbol': symbol,
+                                'coin_contract': None,  # Bitcoin is native, no contract
+                                'coin_decimals': 8,  # Bitcoin has 8 decimal places
+                                'activity_type': 'transfer',
+                                'amount_tokens': btc_amount,
+                                'amount_usd': round(usd_amount, 2),
+                                'price_per_token': token_price,
+                                'raw_transaction': json.dumps(tx),  # Store full transaction data
+                                'data_source': SCANNER_VERSION,
+                                'processed_at': datetime.utcnow()
+                            }
+                            
+                            whale_transactions.append(whale_tx)
+                            
+                        except Exception as e:
+                            logger.debug(f"{self.scanner_name} error processing Bitcoin tx: {e}")
+                            continue
+                    
+                except Exception as e:
+                    logger.debug(f"{self.scanner_name} error scanning Bitcoin block {block_height}: {e}")
+                    continue
+            
+            if whale_transactions:
+                logger.info(f"  🐋 {self.scanner_name} found {len(whale_transactions)} Bitcoin whales")
+            else:
+                logger.info(f"  ⚪ {self.scanner_name} no Bitcoin whales found in recent blocks")
+            
+            return whale_transactions
             
         except Exception as e:
             logger.error(f"❌ {self.scanner_name} Bitcoin whale scan failed: {e}")
