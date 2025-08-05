@@ -557,7 +557,7 @@ class MasterWhaleScanner:
             
             # Get recent Bitcoin blocks for scanning
             whale_transactions = []
-            blocks_to_scan = 12  # ~2 hours of Bitcoin blocks
+            blocks_to_scan = 150  # ~25 hours of Bitcoin blocks for maximum whale coverage
             
             # Get latest Bitcoin block from BlockCypher
             try:
