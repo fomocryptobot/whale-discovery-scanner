@@ -97,7 +97,7 @@ logger.info(f"⏰ Execution time: {datetime.utcnow()}")
 def fetch_kraken_tradeable_symbols():
     """Fetch all tradeable symbols from Kraken Universe Scanner API"""
     try:
-        kraken_api_url = "https://kraken-scanner-webservice.onrender.com/tradeable/coins"
+        kraken_api_url = "https://kraken-scanner-webservice.onrender.com/tradeable/coins?limit=1000"
         response = requests.get(kraken_api_url, timeout=30)
         
         if response.status_code == 200:
