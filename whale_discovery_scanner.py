@@ -94,243 +94,6 @@ logger = logging.getLogger(__name__)
 logger.info(f"🚀 {SCANNER_NAME} DEPLOYMENT STARTING")
 logger.info(f"⏰ Execution time: {datetime.utcnow()}")
 
-def fetch_kraken_tradeable_symbols():
-    """Fetch ALL tradeable symbols directly from Kraken's official API"""
-    try:
-        # DIRECT KRAKEN API - No custom middleman, no pagination limits
-        kraken_api_url = "https://api.kraken.com/0/public/AssetPairs"
-        logger.info(f"🔗 Using DIRECT Kraken API: {kraken_api_url}")
-        
-        response = requests.get(kraken_api_url, timeout=30)
-        
-        if response.status_code == 200:
-            data = response.json()
-            
-            # Check for Kraken API errors
-            if data.get('error') and len(data['error']) > 0:
-                raise Exception(f"Kraken API error: {data['error']}")
-            
-            # Extract all trading pairs from Kraken's response
-            asset_pairs = data.get('result', {})
-            logger.info(f"✅ Fetched {len(asset_pairs)} trading pairs directly from Kraken")
-            
-            # Convert Kraken pairs to our scanner format with DYNAMIC contract lookup
-            token_dict = {}
-            processed_count = 0
-            success_count = 0
-            
-            for kraken_pair_id, pair_info in asset_pairs.items():
-                try:
-                    # Skip offline pairs
-                    if pair_info.get('status') != 'online':
-                        continue
-                    
-                    # Extract base symbol from Kraken pair data
-                    base_asset = pair_info.get('base', '')
-                    altname = pair_info.get('altname', '')
-                    
-                    # Use altname if available (cleaner symbol), otherwise extract from base
-                    if altname:
-                        # Extract base symbol from altname (e.g., "BTCUSD" -> "BTC")
-                        symbol = extract_base_symbol_from_altname(altname)
-                    else:
-                        # Clean up Kraken asset ID (remove X/Z prefixes)
-                        symbol = clean_kraken_asset_id(base_asset)
-                    
-                    if not symbol:
-                        continue
-                        
-                    symbol = symbol.upper()
-                    processed_count += 1
-                    
-                    # Progress logging every 50 tokens
-                    if processed_count % 50 == 0:
-                        logger.info(f"🔍 Progress: {processed_count}/{len(asset_pairs)} pairs processed, {success_count} contracts found")
-                    
-                    # Skip if we already have this symbol (prefer USD pairs)
-                    if symbol in token_dict:
-                        continue
-                    
-                    # DYNAMIC contract lookup - NO hardcoded data
-                    contract_info = get_ethereum_contract_info_dynamic(symbol)
-                    if contract_info:
-                        token_dict[symbol] = contract_info
-                        success_count += 1
-                        logger.debug(f"✅ Added {symbol}: {contract_info['address']}")
-                        
-                except Exception as e:
-                    logger.debug(f"❌ Error processing pair {kraken_pair_id}: {e}")
-                    continue
-            
-            logger.info(f"🎉 DIRECT KRAKEN API LOOKUP COMPLETE!")
-            logger.info(f"📊 Processed: {processed_count} trading pairs")
-            logger.info(f"✅ Found contracts: {success_count} tokens")
-            logger.info(f"📈 Success rate: {(success_count/processed_count)*100:.1f}%")
-            
-            # NO FALLBACK - if we don't have enough tokens, FAIL
-            if success_count < 50:
-                raise Exception(f"Dynamic lookup failed: only {success_count} contracts found (minimum 50 required)")
-            
-            return token_dict
-            
-        else:
-            logger.error(f"❌ Direct Kraken API error: HTTP {response.status_code}")
-            raise Exception(f"Direct Kraken API returned {response.status_code}")
-            
-    except Exception as e:
-        logger.error(f"❌ Failed to fetch from direct Kraken API: {e}")
-        raise Exception(f"Critical failure: Cannot load token universe from direct Kraken API - {e}")
-
-def extract_base_symbol_from_altname(altname):
-    """Extract base symbol from Kraken altname (e.g., 'BTCUSD' -> 'BTC')"""
-    try:
-        # Common quote currencies in order of preference
-        quote_currencies = ['USD', 'USDT', 'USDC', 'EUR', 'GBP', 'BTC', 'ETH', 'XBT']
-        
-        altname = altname.upper()
-        
-        # Try to find a quote currency at the end
-        for quote in quote_currencies:
-            if altname.endswith(quote):
-                base = altname[:-len(quote)]
-                if len(base) >= 2:  # Valid base symbol
-                    return base
-        
-        # If no standard quote found, assume first 3-4 chars are base
-        if len(altname) >= 6:
-            return altname[:3]  # Most common case
-        
-        return None
-        
-    except Exception as e:
-        logger.debug(f"Error extracting base from altname {altname}: {e}")
-        return None
-
-def clean_kraken_asset_id(asset_id):
-    """Clean Kraken asset ID by removing X/Z prefixes"""
-    try:
-        if not asset_id:
-            return None
-            
-        asset_id = asset_id.upper()
-        
-        # Remove Kraken prefixes (X for crypto, Z for fiat)
-        if asset_id.startswith('X') and len(asset_id) > 3:
-            return asset_id[1:]  # Remove X prefix
-        elif asset_id.startswith('Z') and len(asset_id) > 3:
-            return asset_id[1:]  # Remove Z prefix
-        else:
-            return asset_id  # No prefix to remove
-            
-    except Exception as e:
-        logger.debug(f"Error cleaning asset ID {asset_id}: {e}")
-        return None
-
-def get_ethereum_contract_info_dynamic(symbol):
-    """
-    COMPLETELY DYNAMIC contract lookup with multiple data sources
-    NO HARDCODED DATA - everything discovered at runtime
-    """
-    try:
-        # TIER 1: CoinGecko API (primary source)
-        coingecko_result = lookup_via_coingecko(symbol)
-        if coingecko_result:
-            return coingecko_result
-        
-        # TIER 2: Token lists (backup)
-        tokenlist_result = lookup_via_tokenlists(symbol)
-        if tokenlist_result:
-            return tokenlist_result
-        
-        # NO TIER 3 - NO FALLBACK - if dynamic lookup fails, return None
-        logger.debug(f"❌ No contract found for {symbol} via dynamic lookup")
-        return None
-        
-    except Exception as e:
-        logger.debug(f"Contract lookup failed for {symbol}: {e}")
-        return None
-
-def lookup_via_coingecko(symbol):
-    """Dynamic lookup via CoinGecko API with rate limiting"""
-    try:
-        # Rate limiting to respect CoinGecko API limits
-        time.sleep(COINGECKO_DELAY)
-        
-        headers = {'x-cg-pro-api-key': COINGECKO_API_KEY}
-        search_url = f"{COINGECKO_PRO_BASE_URL}/search"
-        params = {'query': symbol}
-        
-        response = requests.get(search_url, headers=headers, params=params, timeout=10)
-        
-        if response.status_code == 200:
-            data = response.json()
-            coins = data.get('coins', [])
-            
-            # Find exact symbol match
-            for coin in coins:
-                if coin.get('symbol', '').upper() == symbol.upper():
-                    coin_id = coin.get('id')
-                    if not coin_id:
-                        continue
-                    
-                    # Get detailed contract information
-                    time.sleep(COINGECKO_DELAY)  # Rate limiting
-                    detail_url = f"{COINGECKO_PRO_BASE_URL}/coins/{coin_id}"
-                    detail_response = requests.get(detail_url, headers=headers, timeout=10)
-                    
-                    if detail_response.status_code == 200:
-                        detail_data = detail_response.json()
-                        platforms = detail_data.get('platforms', {})
-                        
-                        # Extract Ethereum contract address
-                        eth_contract = platforms.get('ethereum', '')
-                        if eth_contract and eth_contract.startswith('0x') and len(eth_contract) == 42:
-                            
-                            # Get decimals from detail platforms
-                            decimals = 18  # default
-                            detail_platforms = detail_data.get('detail_platforms', {})
-                            if 'ethereum' in detail_platforms:
-                                decimals = detail_platforms['ethereum'].get('decimal_place', 18)
-                            
-                            contract_info = {
-                                'address': eth_contract.lower(),
-                                'decimals': int(decimals),
-                                'coingecko_id': coin_id
-                            }
-                            
-                            logger.debug(f"🔍 CoinGecko found {symbol}: {eth_contract}")
-                            return contract_info
-        
-        return None
-        
-    except Exception as e:
-        logger.debug(f"CoinGecko lookup failed for {symbol}: {e}")
-        return None
-
-def lookup_via_tokenlists(symbol):
-    """Backup lookup via token lists"""
-    try:
-        # Use 1inch token list as backup
-        tokenlist_url = "https://tokens.1inch.io/"
-        response = requests.get(tokenlist_url, timeout=10)
-        
-        if response.status_code == 200:
-            tokens = response.json()
-            
-            for token in tokens:
-                if token.get('symbol', '').upper() == symbol.upper():
-                    return {
-                        'address': token.get('address', '').lower(),
-                        'decimals': int(token.get('decimals', 18)),
-                        'coingecko_id': symbol.lower()  # fallback ID
-                    }
-        
-        return None
-        
-    except Exception as e:
-        logger.debug(f"Token list lookup failed for {symbol}: {e}")
-        return None
-
 class EtherscanAPI:
     """Etherscan API with enhanced rate limiting for 20 calls/sec Advanced Plan"""
     
@@ -367,15 +130,8 @@ class EtherscanAPI:
         except Exception as e:
             logger.warning(f"{self.scanner_name} block lookup failed: {e}")
         
-        # Fallback: estimate current block (2-minute cycles = ~10 blocks)
-        baseline_timestamp = 1704067200  # Jan 1, 2025
-        baseline_block = 22000000
-        current_timestamp = int(time.time())
-        seconds_elapsed = current_timestamp - baseline_timestamp
-        estimated_block = baseline_block + (seconds_elapsed // 12)
-        
-        logger.warning(f"⚠️ {self.scanner_name} using estimated block: {estimated_block:,}")
-        return min(estimated_block, 23500000)  # Cap at reasonable max
+        # NO FALLBACK - if API fails, raise error
+        raise Exception(f"❌ ERROR: Cannot determine latest block from Etherscan API. Scanner cannot proceed without current block number.")
     
     def get_token_transfers(self, contract_address, start_block, end_block):
         """Get token transfers with enhanced rate limiting for 20 calls/sec"""
@@ -486,19 +242,62 @@ class MasterWhaleScanner:
         self.tokens_to_scan = self.load_tokens_for_scanning()
 
     def load_tokens_for_scanning(self):
-        """Load tokens dynamically from Kraken API - FAIL if unable to load"""
+        """Load tokens from CoinGecko database - NO API calls required"""
         try:
-            dynamic_tokens = fetch_kraken_tradeable_symbols()
-            if dynamic_tokens and len(dynamic_tokens) >= 50:
-                logger.info(f"✅ Loaded {len(dynamic_tokens)} dynamic tokens from Kraken")
-                return dynamic_tokens
+            logger.info(f"🔍 {self.scanner_name} querying CoinGecko database for contract addresses...")
+            
+            # Query your enhanced CoinGecko database
+            contracts_url = "https://coingecko-datacollector.onrender.com/contracts"
+            response = requests.get(contracts_url, timeout=30)
+            
+            if response.status_code == 200:
+                data = response.json()
+                contracts = data.get('contracts', {})
+                
+                if contracts and len(contracts) >= 50:
+                    logger.info(f"✅ {self.scanner_name} loaded {len(contracts)} tokens from database")
+                    logger.info(f"🚀 {self.scanner_name} eliminated 1000+ API calls - using database only!")
+                    return contracts
+                else:
+                    raise Exception(f"❌ ERROR: Insufficient contracts in database: {len(contracts)}. Need minimum 50 contracts.")
             else:
-                logger.error(f"❌ Insufficient tokens received from dynamic lookup: {len(dynamic_tokens) if dynamic_tokens else 0}")
-                raise Exception("Dynamic token loading failed - insufficient tokens discovered")
+                raise Exception(f"❌ ERROR: CoinGecko database query failed: HTTP {response.status_code}")
+                
         except Exception as e:
-            logger.error(f"❌ Failed to load dynamic tokens: {e}")
-            raise Exception(f"CRITICAL FAILURE: Cannot load token universe - {e}")
+            logger.error(f"❌ Database query failed: {e}")
+            raise Exception(f"❌ CRITICAL ERROR: Cannot load contracts from database - {e}. Master Scanner requires database connection.")
     
+    def get_prices_from_database(self):
+        """Get current token prices from CoinGecko database"""
+        try:
+            # Query market data from your database
+            conn = psycopg.connect(DB_URL)
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT DISTINCT ON (symbol) symbol, current_price
+                FROM market_data 
+                WHERE current_price > 0
+                ORDER BY symbol, collected_at DESC
+            """)
+            
+            prices = {}
+            for row in cursor.fetchall():
+                symbol = row[0].upper()
+                price = float(row[1])
+                if symbol in self.tokens_to_scan:
+                    prices[self.tokens_to_scan[symbol]['coingecko_id']] = price
+            
+            cursor.close()
+            conn.close()
+            
+            logger.info(f"💰 {self.scanner_name} retrieved {len(prices)} prices from database")
+            return prices
+            
+        except Exception as e:
+            logger.error(f"❌ Database price lookup failed: {e}")
+            return {}
+
     def connect_database(self):
         """Connect to database with autocommit disabled"""
         try:
@@ -720,9 +519,8 @@ class MasterWhaleScanner:
             
             logger.info(f"📊 {self.scanner_name} scanning blocks {start_block:,} to {latest_block:,} (2-minute cycle)")
             
-            # Get token prices for ALL discovered tokens
-            coingecko_ids = [info['coingecko_id'] for info in self.tokens_to_scan.values()]
-            prices = self.coingecko.get_multiple_prices(coingecko_ids)
+            # Get token prices from database instead of API
+            prices = self.get_prices_from_database()
             
             if not prices:
                 logger.error(f"❌ {self.scanner_name} no token prices retrieved - mission aborted")
