@@ -53,6 +53,8 @@ ETHERSCAN_API_KEY = os.getenv('ETHERSCAN_API_KEY')
 COINGECKO_API_KEY = os.getenv('COINGECKO_API_KEY')
 KRAKEN_API_KEY = os.getenv('KRAKEN_API_KEY')
 KRAKEN_PRIVATE_KEY = os.getenv('KRAKEN_PRIVATE_KEY')
+BLOCKCYPHER_API_KEY = os.getenv('BLOCKCYPHER_API_KEY')
+SOLSCAN_API_KEY = os.getenv('SOLSCAN_API_KEY')
 
 print("🔧 MASTER WHALE SCANNER: Environment variables loaded", flush=True)
 
@@ -67,6 +69,10 @@ if not KRAKEN_API_KEY:
     raise ValueError("❌ KRAKEN_API_KEY environment variable is required")
 if not KRAKEN_PRIVATE_KEY:
     raise ValueError("❌ KRAKEN_PRIVATE_KEY environment variable is required")
+if not BLOCKCYPHER_API_KEY:
+    raise ValueError("❌ BLOCKCYPHER_API_KEY environment variable is required")
+if not SOLSCAN_API_KEY:
+    raise ValueError("❌ SOLSCAN_API_KEY environment variable is required")
 
 print("🔧 MASTER WHALE SCANNER: Environment variables validated", flush=True)
 
@@ -180,6 +186,73 @@ class EtherscanAPI:
         
         return []
 
+class BlockCypherAPI:
+    """BlockCypher API for Bitcoin whale detection"""
+    
+    def __init__(self, api_key, delay=0.34):  # 3 req/sec = 0.34s delay
+        self.api_key = api_key
+        self.delay = delay
+        self.base_url = "https://api.blockcypher.com/v1/btc/main"
+        self.session = requests.Session()
+        self.scanner_name = SCANNER_NAME
+    
+    def get_address_transactions(self, address, limit=50):
+        """Get Bitcoin transactions for address"""
+        try:
+            url = f"{self.base_url}/addrs/{address}/full"
+            params = {
+                'token': self.api_key,
+                'limit': limit
+            }
+            
+            time.sleep(self.delay)
+            response = self.session.get(url, params=params, timeout=30)
+            
+            if response.status_code == 200:
+                data = response.json()
+                return data.get('txs', [])
+            else:
+                logger.warning(f"{self.scanner_name} BlockCypher error: HTTP {response.status_code}")
+                return []
+                
+        except Exception as e:
+            logger.error(f"{self.scanner_name} BlockCypher request failed: {e}")
+            return []
+
+class SolscanAPI:
+    """Solscan API for Solana whale detection"""
+    
+    def __init__(self, api_key, delay=0.06):  # 1000 req/60sec = 16.67/sec = 0.06s delay
+        self.api_key = api_key
+        self.delay = delay
+        self.base_url = "https://pro-api.solscan.io/v2.0"
+        self.session = requests.Session()
+        self.session.headers.update({'token': self.api_key})
+        self.scanner_name = SCANNER_NAME
+    
+    def get_account_transactions(self, address, limit=50):
+        """Get Solana transactions for address"""
+        try:
+            url = f"{self.base_url}/account/transactions"
+            params = {
+                'account': address,
+                'limit': limit
+            }
+            
+            time.sleep(self.delay)
+            response = self.session.get(url, params=params, timeout=30)
+            
+            if response.status_code == 200:
+                data = response.json()
+                return data.get('data', [])
+            else:
+                logger.warning(f"{self.scanner_name} Solscan error: HTTP {response.status_code}")
+                return []
+                
+        except Exception as e:
+            logger.error(f"{self.scanner_name} Solscan request failed: {e}")
+            return []
+
 class CoinGeckoProAPI:
     """CoinGecko Pro API with proper rate limiting for 500 calls/min"""
     
@@ -237,6 +310,8 @@ class MasterWhaleScanner:
     def __init__(self):
         self.etherscan = EtherscanAPI(ETHERSCAN_API_KEY)
         self.coingecko = CoinGeckoProAPI(COINGECKO_API_KEY)
+        self.blockcypher = BlockCypherAPI(BLOCKCYPHER_API_KEY)
+        self.solscan = SolscanAPI(SOLSCAN_API_KEY)
         self.db_connection = None
         self.scanner_name = SCANNER_NAME
         self.tokens_to_scan = self.load_tokens_for_scanning()
@@ -267,6 +342,30 @@ class MasterWhaleScanner:
             logger.error(f"❌ Database query failed: {e}")
             raise Exception(f"❌ CRITICAL ERROR: Cannot load contracts from database - {e}. Master Scanner requires database connection.")
     
+    def detect_blockchain(self, symbol, token_info):
+        """Detect blockchain from token contract data - NO fallbacks"""
+        try:
+            # Check if token has Ethereum contract address (from database)
+            if 'address' in token_info and token_info['address']:
+                # Has contract address = EVM-based blockchain
+                return 'eth'  # Etherscan V2 covers all EVM chains
+            
+            # Bitcoin (no contract addresses in database)
+            if symbol == 'BTC':
+                return 'btc'
+            
+            # Solana (no contract addresses in database) 
+            if symbol == 'SOL':
+                return 'sol'
+                
+            # If no blockchain detected, raise error instead of fallback
+            raise Exception(f"Cannot determine blockchain for {symbol} - no contract data available")
+            
+        except Exception as e:
+            logger.error(f"{self.scanner_name} blockchain detection failed for {symbol}: {e}")
+            # NO FALLBACK - skip this token entirely
+            return None
+    
     def get_prices_from_database(self):
         """Get current token prices from CoinGecko database"""
         try:
@@ -285,7 +384,7 @@ class MasterWhaleScanner:
             for row in cursor.fetchall():
                 symbol = row[0].upper()
                 price = float(row[1])
-                if symbol in self.tokens_to_scan:
+                if symbol in self.tokens_to_scan and 'coingecko_id' in self.tokens_to_scan[symbol]:
                     prices[self.tokens_to_scan[symbol]['coingecko_id']] = price
             
             cursor.close()
@@ -321,13 +420,43 @@ class MasterWhaleScanner:
                 if field not in tx or tx[field] is None or tx[field] == '':
                     return False
             
-            # Validate transaction ID format
-            if not isinstance(tx['transaction_id'], str) or not tx['transaction_id'].startswith('0x'):
+            # Validate transaction ID format for multi-blockchain
+            if not isinstance(tx['transaction_id'], str) or len(tx['transaction_id']) < 10:
                 return False
             
-            # Validate wallet address format  
-            if not isinstance(tx['wallet_address'], str) or len(tx['wallet_address']) != 42:
+            # Different blockchains have different transaction ID formats
+            blockchain = tx.get('blockchain', 'eth')
+            if blockchain == 'eth':
+                # Ethereum: 0x + 64 hex characters
+                if not tx['transaction_id'].startswith('0x') or len(tx['transaction_id']) != 66:
+                    return False
+            elif blockchain == 'btc':
+                # Bitcoin: 64 hex characters (no 0x prefix)
+                if len(tx['transaction_id']) != 64:
+                    return False
+            elif blockchain == 'sol':
+                # Solana: base58 encoded, variable length
+                if len(tx['transaction_id']) < 80 or len(tx['transaction_id']) > 90:
+                    return False
+            
+            # Validate wallet address format for multi-blockchain
+            if not isinstance(tx['wallet_address'], str) or len(tx['wallet_address']) < 10:
                 return False
+            
+            # Different blockchains have different address formats
+            blockchain = tx.get('blockchain', 'eth')
+            if blockchain == 'eth':
+                # Ethereum: 0x + 40 hex characters = 42 total
+                if not tx['wallet_address'].startswith('0x') or len(tx['wallet_address']) != 42:
+                    return False
+            elif blockchain == 'btc':
+                # Bitcoin: 26-35 characters, various formats
+                if len(tx['wallet_address']) < 26 or len(tx['wallet_address']) > 35:
+                    return False
+            elif blockchain == 'sol':
+                # Solana: base58 encoded, typically 32-44 characters
+                if len(tx['wallet_address']) < 32 or len(tx['wallet_address']) > 44:
+                    return False
             
             # Validate USD amount range ($500 minimum for master scanner)
             usd_amount = float(tx['amount_usd'])
@@ -407,6 +536,38 @@ class MasterWhaleScanner:
         
         logger.info(f"💾 {self.scanner_name} saved {saved_count}/{len(transactions)} whale transactions")
         return saved_count
+    
+    def scan_bitcoin_whales(self, symbol, token_price):
+        """Scan Bitcoin whale transactions"""
+        try:
+            # For Bitcoin, we scan recent transactions from known whale addresses
+            # This is a simplified approach - Bitcoin whale addresses would come from database
+            logger.info(f"🔍 {self.scanner_name} scanning Bitcoin whales for {symbol}...")
+            
+            # Bitcoin whale detection would require different logic
+            # For now, return empty list - Bitcoin integration needs whale address database
+            logger.info(f"  ⚪ {self.scanner_name} Bitcoin whale scanning not yet implemented")
+            return []
+            
+        except Exception as e:
+            logger.error(f"❌ {self.scanner_name} Bitcoin whale scan failed: {e}")
+            return []
+    
+    def scan_solana_whales(self, symbol, token_price):
+        """Scan Solana whale transactions"""
+        try:
+            # For Solana, we scan recent transactions from known whale addresses
+            # This is a simplified approach - Solana whale addresses would come from database
+            logger.info(f"🔍 {self.scanner_name} scanning Solana whales for {symbol}...")
+            
+            # Solana whale detection would require different logic
+            # For now, return empty list - Solana integration needs whale address database
+            logger.info(f"  ⚪ {self.scanner_name} Solana whale scanning not yet implemented")
+            return []
+            
+        except Exception as e:
+            logger.error(f"❌ {self.scanner_name} Solana whale scan failed: {e}")
+            return []
     
     def scan_token_whales(self, symbol, token_info, token_price, start_block, end_block):
         """Scan for whale transactions in a token with $500 threshold"""
@@ -526,9 +687,10 @@ class MasterWhaleScanner:
                 logger.error(f"❌ {self.scanner_name} no token prices retrieved - mission aborted")
                 return False
             
-            # Scan ALL tokens with $500 threshold
+            # Scan ALL tokens with $500 threshold - MULTI-BLOCKCHAIN
             total_whales = 0
             total_volume = 0.0
+            blockchain_stats = {'eth': 0, 'btc': 0, 'sol': 0, 'skipped': 0}
             
             for symbol, token_info in self.tokens_to_scan.items():
                 try:
@@ -536,11 +698,33 @@ class MasterWhaleScanner:
                     
                     if price <= 0:
                         logger.warning(f"{self.scanner_name} no price for {symbol}, skipping")
+                        blockchain_stats['skipped'] += 1
                         continue
                     
-                    whales = self.scan_token_whales(
-                        symbol, token_info, price, start_block, latest_block
-                    )
+                    # Detect blockchain for this token
+                    blockchain = self.detect_blockchain(symbol, token_info)
+                    
+                    if blockchain is None:
+                        logger.warning(f"{self.scanner_name} unknown blockchain for {symbol}, skipping")
+                        blockchain_stats['skipped'] += 1
+                        continue
+                    
+                    # Route to appropriate blockchain scanner
+                    if blockchain == 'eth':
+                        whales = self.scan_token_whales(
+                            symbol, token_info, price, start_block, latest_block
+                        )
+                        blockchain_stats['eth'] += 1
+                    elif blockchain == 'btc':
+                        whales = self.scan_bitcoin_whales(symbol, price)
+                        blockchain_stats['btc'] += 1
+                    elif blockchain == 'sol':
+                        whales = self.scan_solana_whales(symbol, price)
+                        blockchain_stats['sol'] += 1
+                    else:
+                        logger.warning(f"{self.scanner_name} unsupported blockchain {blockchain} for {symbol}")
+                        blockchain_stats['skipped'] += 1
+                        continue
                     
                     if whales:
                         saved = self.save_transactions(whales)
@@ -560,13 +744,19 @@ class MasterWhaleScanner:
             # Master scanner mission summary
             duration = (datetime.utcnow() - start_time).total_seconds() / 60
             
-            logger.info(f"🎉 {SCANNER_NAME} MISSION COMPLETE!")
+            logger.info(f"🎉 {SCANNER_NAME} MULTI-BLOCKCHAIN MISSION COMPLETE!")
             logger.info(f"  🐋 Total whales captured: {total_whales}")
             logger.info(f"  💰 Total volume tracked: ${total_volume:,.2f}")
             logger.info(f"  ⏰ Mission duration: {duration:.1f} minutes")
-            logger.info(f"  📊 Tokens scanned: {len(self.tokens_to_scan)}")
-            logger.info(f"  🔥 Scanner performance: {total_whales/duration:.1f} whales/minute")
+            logger.info(f"  📊 Total tokens scanned: {len(self.tokens_to_scan)}")
+            performance = total_whales/max(duration, 0.01) if duration > 0 else 0
+            logger.info(f"  🔥 Scanner performance: {performance:.1f} whales/minute")
             logger.info(f"  💸 Threshold: ${WHALE_THRESHOLD_USD}+ (catches ALL whale activity)")
+            logger.info(f"  🌐 BLOCKCHAIN COVERAGE:")
+            logger.info(f"    ⛓️  Ethereum/EVM: {blockchain_stats['eth']} tokens")
+            logger.info(f"    ₿  Bitcoin: {blockchain_stats['btc']} tokens") 
+            logger.info(f"    ◎  Solana: {blockchain_stats['sol']} tokens")
+            logger.info(f"    ⚪ Skipped: {blockchain_stats['skipped']} tokens")
             sys.stdout.flush()
             
             return True
