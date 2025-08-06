@@ -347,7 +347,7 @@ class MasterWhaleScanner:
                     logger.info(f"💰 {self.scanner_name} added native BTC and SOL for multi-blockchain scanning")
                     return contracts
                 else:
-                    raise Exception(f"❌ ERROR: Insufficient contracts in database: {len(contracts)}. Need minimum 50 contracts.")
+                    raise Exception(f"❌ ERROR: Insufficient contracts in database: {len(contracts)}. Need minimum 40 contracts.")
             else:
                 raise Exception(f"❌ ERROR: CoinGecko database query failed: HTTP {response.status_code}")
                 
