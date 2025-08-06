@@ -329,7 +329,7 @@ class MasterWhaleScanner:
                 data = response.json()
                 contracts = data.get('contracts', {})
                 
-                if contracts and len(contracts) >= 50:
+                if contracts and len(contracts) >= 40:
                     # Add native blockchain tokens manually (they have no contracts)
                     contracts['BTC'] = {
                         'coingecko_id': 'bitcoin',
