@@ -228,15 +228,15 @@ class SolscanAPI:
         self.base_url = "https://pro-api.solscan.io/v2.0"
         self.session = requests.Session()
         
-        # Set headers with proper format - add accept header and ensure token is string
+        # Set headers with JWT Bearer token format (required for v2 API)
         self.session.headers.update({
             'accept': 'application/json',
-            'token': str(self.api_key).strip()
+            'Authorization': f'Bearer {str(self.api_key).strip()}'
         })
         self.scanner_name = SCANNER_NAME
         
         # Debug log (remove after testing)
-        logger.info(f"🔧 {self.scanner_name} Solscan API initialized with key: {str(self.api_key)[:20]}...")
+        logger.info(f"🔧 {self.scanner_name} Solscan API initialized with Bearer token: {str(self.api_key)[:20]}...")
     
     def get_account_transactions(self, address, limit=50):
         """Get Solana transactions for address"""
