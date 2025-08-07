@@ -227,8 +227,16 @@ class SolscanAPI:
         self.delay = delay
         self.base_url = "https://pro-api.solscan.io/v2.0"
         self.session = requests.Session()
-        self.session.headers.update({'token': self.api_key})
+        
+        # Set headers with proper format - add accept header and ensure token is string
+        self.session.headers.update({
+            'accept': 'application/json',
+            'token': str(self.api_key).strip()
+        })
         self.scanner_name = SCANNER_NAME
+        
+        # Debug log (remove after testing)
+        logger.info(f"🔧 {self.scanner_name} Solscan API initialized with key: {str(self.api_key)[:20]}...")
     
     def get_account_transactions(self, address, limit=50):
         """Get Solana transactions for address"""
@@ -239,14 +247,23 @@ class SolscanAPI:
                 'limit': limit
             }
             
+            logger.debug(f"🔧 {self.scanner_name} Solscan request: {url} with params: {params}")
+            
             time.sleep(self.delay)
             response = self.session.get(url, params=params, timeout=30)
+            
+            logger.debug(f"🔧 {self.scanner_name} Solscan response: {response.status_code}")
             
             if response.status_code == 200:
                 data = response.json()
                 return data.get('data', [])
+            elif response.status_code == 401:
+                logger.warning(f"{self.scanner_name} Solscan authentication failed - check API key")
+                logger.debug(f"🔧 Response body: {response.text}")
+                return []
             else:
                 logger.warning(f"{self.scanner_name} Solscan error: HTTP {response.status_code}")
+                logger.debug(f"🔧 Response body: {response.text}")
                 return []
                 
         except Exception as e:
