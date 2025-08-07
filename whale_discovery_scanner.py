@@ -352,7 +352,7 @@ class MasterWhaleScanner:
             cursor.close()
             conn.close()
             
-            if len(contracts) >= 40:
+            if len(contracts) >= 0:
                 # Add native blockchain tokens manually (they have no contracts)
                 contracts['BTC'] = {
                     'coingecko_id': 'bitcoin',
