@@ -236,7 +236,7 @@ class SolscanAPI:
         self.scanner_name = SCANNER_NAME
         
         # Debug log (remove after testing)
-        logger.info(f"🔧 {self.scanner_name} Solscan API initialized with Bearer token: {str(self.api_key)[:20]}...")
+        logger.info(f"🔧 {self.scanner_name} Solscan API initialized with token header: {str(self.api_key)[:20]}...")
     
     def get_account_transactions(self, address, limit=50):
         """Get Solana transactions for address"""
@@ -752,7 +752,7 @@ class MasterWhaleScanner:
             for address in whale_addresses:
                 try:
                     params = {
-                        'account': address,
+                        'address': address,
                         'limit': 25  # Reduced per address for rate limiting
                     }
                     
