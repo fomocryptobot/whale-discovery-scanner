@@ -228,10 +228,10 @@ class SolscanAPI:
         self.base_url = "https://pro-api.solscan.io/v2.0"
         self.session = requests.Session()
         
-        # Set headers with JWT Bearer token format (required for v2 API)
+        # Set headers with token format (Solscan v2.0 official format)
         self.session.headers.update({
             'accept': 'application/json',
-            'Authorization': f'Bearer {str(self.api_key).strip()}'
+            'token': str(self.api_key).strip()
         })
         self.scanner_name = SCANNER_NAME
         
@@ -243,7 +243,7 @@ class SolscanAPI:
         try:
             url = f"{self.base_url}/account/transactions"
             params = {
-                'account': address,
+                'address': address,
                 'limit': limit
             }
             
