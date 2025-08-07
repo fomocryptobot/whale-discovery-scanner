@@ -317,43 +317,65 @@ class MasterWhaleScanner:
         self.tokens_to_scan = self.load_tokens_for_scanning()
 
     def load_tokens_for_scanning(self):
-        """Load tokens from CoinGecko database - NO API calls required"""
+        """Load tokens directly from Trinity database - bypassing broken contracts endpoint"""
         try:
-            logger.info(f"🔍 {self.scanner_name} querying CoinGecko database for contract addresses...")
+            logger.info(f"🔍 {self.scanner_name} querying Trinity database directly for tokens and contracts...")
             
-            # Query your enhanced CoinGecko database
-            contracts_url = "https://coingecko-datacollector.onrender.com/contracts"
-            response = requests.get(contracts_url, timeout=30)
+            # Connect directly to Trinity database to get tokens with contract addresses
+            conn = psycopg.connect(DB_URL)
+            cursor = conn.cursor()
             
-            if response.status_code == 200:
-                data = response.json()
-                contracts = data.get('contracts', {})
+            # Get active tokens from supported_symbols table (populated by data collector)
+            cursor.execute("""
+                SELECT symbol, coin_id, ethereum_contract_address, contract_decimals
+                FROM supported_symbols 
+                WHERE is_active = true 
+                ORDER BY priority DESC
+                LIMIT 100
+            """)
+            
+            contracts = {}
+            rows = cursor.fetchall()
+            
+            for row in rows:
+                symbol = row[0]
+                coin_id = row[1] 
+                contract_address = row[2]
+                contract_decimals = row[3] or 18
                 
-                if contracts and len(contracts) >= 40:
-                    # Add native blockchain tokens manually (they have no contracts)
-                    contracts['BTC'] = {
-                        'coingecko_id': 'bitcoin',
-                        'decimals': 8,
-                        'address': None  # Native Bitcoin has no contract
-                    }
-                    contracts['SOL'] = {
-                        'coingecko_id': 'solana',
-                        'decimals': 9,
-                        'address': None  # Native Solana has no contract  
-                    }
-                    
-                    logger.info(f"✅ {self.scanner_name} loaded {len(contracts)} tokens from database")
-                    logger.info(f"🚀 {self.scanner_name} eliminated 1000+ API calls - using database only!")
-                    logger.info(f"💰 {self.scanner_name} added native BTC and SOL for multi-blockchain scanning")
-                    return contracts
-                else:
-                    raise Exception(f"❌ ERROR: Insufficient contracts in database: {len(contracts)}. Need minimum 40 contracts.")
+                contracts[symbol] = {
+                    'coingecko_id': coin_id,
+                    'decimals': contract_decimals,
+                    'address': contract_address  # None for native tokens like BTC/SOL
+                }
+            
+            cursor.close()
+            conn.close()
+            
+            if len(contracts) >= 40:
+                # Add native blockchain tokens manually (they have no contracts)
+                contracts['BTC'] = {
+                    'coingecko_id': 'bitcoin',
+                    'decimals': 8,
+                    'address': None  # Native Bitcoin has no contract
+                }
+                contracts['SOL'] = {
+                    'coingecko_id': 'solana',
+                    'decimals': 9,
+                    'address': None  # Native Solana has no contract  
+                }
+                
+                logger.info(f"✅ {self.scanner_name} loaded {len(contracts)} tokens directly from Trinity database")
+                logger.info(f"🚀 {self.scanner_name} bypassed broken contracts API endpoint!")
+                logger.info(f"💰 {self.scanner_name} using real contract addresses from data collector")
+                logger.info(f"🌐 {self.scanner_name} added native BTC and SOL for multi-blockchain scanning")
+                return contracts
             else:
-                raise Exception(f"❌ ERROR: CoinGecko database query failed: HTTP {response.status_code}")
+                raise Exception(f"❌ ERROR: Insufficient tokens in database: {len(contracts)}. Need minimum 40 tokens.")
                 
         except Exception as e:
             logger.error(f"❌ Database query failed: {e}")
-            raise Exception(f"❌ CRITICAL ERROR: Cannot load contracts from database - {e}. Master Scanner requires database connection.")
+            raise Exception(f"❌ CRITICAL ERROR: Cannot load tokens from Trinity database - {e}. Master Scanner requires database connection.")
     
     def detect_blockchain(self, symbol, token_info):
         """Detect blockchain from token contract data - NO fallbacks"""
