@@ -981,9 +981,8 @@ class MasterWhaleScanner:
                     price = prices.get(token_info['coingecko_id'], 0)
                     
                     if price <= 0:
-                        logger.warning(f"{self.scanner_name} no price for {symbol}, skipping")
-                        blockchain_stats['skipped'] += 1
-                        continue
+                        price = 0  # Store as $0 value instead of skipping
+                        logger.debug(f"{self.scanner_name} {symbol}: no price data, storing as $0")
                     
                     # Detect blockchain for this token
                     blockchain = self.detect_blockchain(symbol, token_info)
