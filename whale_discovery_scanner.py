@@ -1028,8 +1028,8 @@ class MasterWhaleScanner:
                         logger.debug(f"  ⚪ {self.scanner_name} {symbol}: No whales found")
                     
                 except Exception as e:
-                    logger.error(f"❌ {self.scanner_name} error scanning {symbol}: {e}")
-                    continue
+                        # Silent handling - no log message needed for unknown blockchain
+                    return None
             
             # Master scanner mission summary
             duration = (datetime.utcnow() - start_time).total_seconds() / 60
