@@ -348,7 +348,6 @@ class MasterWhaleScanner:
                 FROM supported_symbols 
                 WHERE is_active = true 
                 ORDER BY priority DESC
-                LIMIT 100
             """)
             
             contracts = {}
