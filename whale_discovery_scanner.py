@@ -413,7 +413,7 @@ class MasterWhaleScanner:
             raise Exception(f"Cannot determine blockchain for {symbol} - no contract data available")
             
         except Exception as e:
-            logger.error(f"{self.scanner_name} blockchain detection failed for {symbol}: {e}")
+            logger.info(f"{self.scanner_name} {symbol}: no contract data (will store as unknown blockchain)")
             # NO FALLBACK - skip this token entirely
             return None
     
