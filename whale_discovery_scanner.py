@@ -989,9 +989,9 @@ class MasterWhaleScanner:
                     blockchain = self.detect_blockchain(symbol, token_info)
                     
                     if blockchain is None:
-                        logger.warning(f"{self.scanner_name} unknown blockchain for {symbol}, skipping")
-                        blockchain_stats['skipped'] += 1
-                        continue
+                        blockchain = 'unknown'
+                        logger.info(f"{self.scanner_name} storing {symbol} with unknown blockchain")
+                        blockchain_stats['unknown'] = blockchain_stats.get('unknown', 0) + 1
                     
                     # Route to appropriate blockchain scanner
                     if blockchain == 'eth':
