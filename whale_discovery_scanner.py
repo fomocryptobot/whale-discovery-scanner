@@ -857,7 +857,7 @@ class MasterWhaleScanner:
     def scan_token_whales(self, symbol, token_info, token_price, start_block, end_block):
         """Scan for whale transactions in a token with $500 threshold"""
         if token_price <= 0:
-            logger.warning(f"{self.scanner_name} skipping {symbol} - no price data")
+            # Skip scanning tokens without price data
             return []
         
         logger.info(f"🔍 {self.scanner_name} scanning {symbol} (${token_price:.6f})...")
