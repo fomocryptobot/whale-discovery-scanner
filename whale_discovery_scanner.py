@@ -1006,19 +1006,9 @@ class MasterWhaleScanner:
                         whales = self.scan_solana_whales(symbol, price)
                         blockchain_stats['sol'] += 1
                     elif blockchain == 'unknown':
-                        # Create basic whale intelligence record for unknown blockchain tokens
-                        whale_record = {
-                            'symbol': symbol,
-                            'price': price,
-                            'blockchain': 'unknown',
-                            'timestamp': datetime.utcnow(),
-                            'data_source': SCANNER_VERSION,
-                            'whale_threshold_met': price >= WHALE_THRESHOLD_USD if price > 0 else False
-                        }
-                        logger.info(f"{self.scanner_name} {symbol}: Stored symbol intelligence (unknown blockchain)")
+                        # Scan for whale transactions using generic price/volume detection
+                        whales = self.scan_unknown_blockchain_whales(symbol, price)
                         blockchain_stats['unknown'] = blockchain_stats.get('unknown', 0) + 1
-                        # Store basic symbol intelligence even without transaction scanning
-                        continue
                     else:
                         logger.warning(f"{self.scanner_name} unsupported blockchain {blockchain} for {symbol}")
                         blockchain_stats['skipped'] += 1
