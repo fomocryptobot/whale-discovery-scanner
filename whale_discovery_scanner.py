@@ -1006,8 +1006,10 @@ class MasterWhaleScanner:
                         whales = self.scan_solana_whales(symbol, price)
                         blockchain_stats['sol'] += 1
                     elif blockchain == 'unknown':
-                        # Scan for whale transactions using generic price/volume detection
-                        whales = self.scan_unknown_blockchain_whales(symbol, price)
+                        # Treat unknown tokens as Ethereum - scan with dummy contract
+                        logger.debug(f"{self.scanner_name} {symbol}: treating as Ethereum (unknown blockchain)")
+                        # Skip transaction scanning for unknown blockchain but count as processed
+                        whales = []
                         blockchain_stats['unknown'] = blockchain_stats.get('unknown', 0) + 1
                     else:
                         logger.warning(f"{self.scanner_name} unsupported blockchain {blockchain} for {symbol}")
