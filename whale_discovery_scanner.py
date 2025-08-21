@@ -1005,6 +1005,12 @@ class MasterWhaleScanner:
                     elif blockchain == 'sol':
                         whales = self.scan_solana_whales(symbol, price)
                         blockchain_stats['sol'] += 1
+                    elif blockchain == 'unknown':
+                        # Store token info even without transaction scanning
+                        logger.info(f"{self.scanner_name} {symbol}: No transaction scanning (unknown blockchain)")
+                        blockchain_stats['unknown'] = blockchain_stats.get('unknown', 0) + 1
+                        # Could add basic price/volume tracking here if needed
+                        continue  # Skip transaction scanning but count as processed
                     else:
                         logger.warning(f"{self.scanner_name} unsupported blockchain {blockchain} for {symbol}")
                         blockchain_stats['skipped'] += 1
