@@ -239,9 +239,9 @@ class SolscanAPI:
         logger.info(f"🔧 {self.scanner_name} Solscan API initialized with token header: {str(self.api_key)[:20]}...")
     
     def get_account_transactions(self, address, limit=50):
-        """Get Solana transactions for address"""
+        """Get Solana transfer data for whale detection"""
         try:
-            url = f"{self.base_url}/account/transactions"
+            url = f"{self.base_url}/account/transfer"
             params = {
                 'address': address,
                 'limit': limit
@@ -745,14 +745,15 @@ class MasterWhaleScanner:
             # Initialize variables
             whale_transactions = []
             seen_transactions = set()
-            url = f"{self.solscan.base_url}/account/transactions"
+            url = f"{self.solscan.base_url}/account/transfer"
             
             # Process each whale address
             for address in whale_addresses:
                 try:
                     params = {
                         'address': address,
-                        'limit': 25  # Reduced per address for rate limiting
+                        'limit': 25,  # Reduced per address for rate limiting
+                        'value[]': ['500', '100000000']  # $500-$100M whale detection range
                     }
                     
                     time.sleep(self.solscan.delay)  # Rate limiting
