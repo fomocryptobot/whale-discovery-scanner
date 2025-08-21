@@ -413,7 +413,7 @@ class MasterWhaleScanner:
             raise Exception(f"Cannot determine blockchain for {symbol} - no contract data available")
             
         except Exception as e:
-            logger.info(f"{self.scanner_name} {symbol}: no contract data (will store as unknown blockchain)")
+            # Silent handling - symbol will be stored as unknown blockchain
             # NO FALLBACK - skip this token entirely
             return None
     
@@ -983,7 +983,7 @@ class MasterWhaleScanner:
                     
                     if price <= 0:
                         price = 0  # Store as $0 value instead of skipping
-                        logger.debug(f"{self.scanner_name} {symbol}: no price data, storing as $0")
+                        # Silent handling for no price data
                     
                     # Detect blockchain for this token
                     blockchain = self.detect_blockchain(symbol, token_info)
@@ -1036,8 +1036,8 @@ class MasterWhaleScanner:
                         logger.debug(f"  ⚪ {self.scanner_name} {symbol}: No whales found")
                     
                 except Exception as e:
-                        # Silent handling - no log message needed for unknown blockchain
-                    return None
+                    logger.error(f"❌ {self.scanner_name} error scanning {symbol}: {e}")
+                    continue
             
             # Master scanner mission summary
             duration = (datetime.utcnow() - start_time).total_seconds() / 60
