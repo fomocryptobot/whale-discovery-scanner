@@ -425,10 +425,14 @@ class MasterWhaleScanner:
             cursor = conn.cursor()
             
             cursor.execute("""
-                SELECT DISTINCT ON (symbol) symbol, current_price
-                FROM market_data 
-                WHERE current_price > 0
-                ORDER BY symbol, collected_at DESC
+                SELECT DISTINCT ON (coin_symbol) coin_symbol, 
+                       FIRST_VALUE(price_per_token) OVER (
+                           PARTITION BY coin_symbol 
+                           ORDER BY block_timestamp DESC
+                       ) as current_price
+                FROM whale_transactions 
+                WHERE price_per_token > 0
+                ORDER BY coin_symbol, block_timestamp DESC
             """)
             
             prices = {}
