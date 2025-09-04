@@ -7,7 +7,7 @@ ZERO HARDCODED SYMBOLS - Complete dynamic contract discovery
 
 SPECIFICATIONS:
 - $500 whale threshold (catches all whale activity)
-- 2-minute scan cycles (optimal API utilization)
+- 24-hour scan cycles (free tier compliance)
 - 464+ token coverage (full Kraken universe)
 - 20 calls/sec Etherscan Advanced Plan
 - 500 calls/min CoinGecko Pro Plan
@@ -43,7 +43,7 @@ print("🔧 MASTER WHALE SCANNER: Modules imported", flush=True)
 # MASTER SCANNER IDENTIFICATION
 SCANNER_NAME = "Master_Whale_Scanner"
 SCANNER_VERSION = "master_whale_scanner_v1.0"
-SCANNER_SCHEDULE = "every_2_minutes"  # Optimal API utilization
+SCANNER_SCHEDULE = "every_24_hours"  # Free tier compliance
 
 print(f"🔥 {SCANNER_NAME} LOADING...", flush=True)
 
@@ -76,9 +76,9 @@ if not SOLSCAN_API_KEY:
 
 print("🔧 MASTER WHALE SCANNER: Environment variables validated", flush=True)
 
-# Master scanner configuration - optimized for 2-minute cycles
+# Master scanner configuration - optimized for 24-hour cycles
 WHALE_THRESHOLD_USD = 500  # $500 catches ALL whale activity (retail + institutional)
-ETHERSCAN_DELAY = 0.05  # 20 calls/second for Advanced Plan (0.05s = 20/sec)
+ETHERSCAN_DELAY = 0.2   # 5 calls/second for Free Plan (0.2s = 5/sec)
 COINGECKO_DELAY = 0.12  # 500 calls/minute = 8.33/sec, use 0.12s for safety
 MAX_USD_AMOUNT = 100_000_000
 COINGECKO_PRO_BASE_URL = "https://pro-api.coingecko.com/api/v3"
@@ -962,12 +962,12 @@ class MasterWhaleScanner:
                 logger.error(f"❌ {self.scanner_name} cannot determine latest block - mission aborted")
                 return False
             
-            # Calculate 2-minute scan range (optimized for 2-minute cycles)
+            # Calculate 24-hour scan range (optimized for 24-hour cycles)
             blocks_per_hour = 300  # ~12 seconds per block
-            blocks_back = int(blocks_per_hour * (2/60))  # 2-minute window = 10 blocks
+            blocks_back = int(blocks_per_hour * 24)  # 24-hour window = 7200 blocks
             start_block = max(0, latest_block - blocks_back)
             
-            logger.info(f"📊 {self.scanner_name} scanning blocks {start_block:,} to {latest_block:,} (2-minute cycle)")
+            logger.info(f"📊 {self.scanner_name} scanning blocks {start_block:,} to {latest_block:,} (24-hour cycle)")
             
             # Get token prices from database instead of API
             prices = self.get_prices_from_database()
